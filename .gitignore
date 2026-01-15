@@ -15,6 +15,3 @@ venv/
 *.snap
 *.log
 log/
-
-# Apps are submodules (managed separately)
-apps/

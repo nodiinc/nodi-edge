@@ -6,11 +6,11 @@ PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Clone dependency libraries (if not exists)
 if [ ! -d "$PARENT_DIR/nodi-libs" ]; then
-    git clone git@github.com:yourname/nodi-libs.git "$PARENT_DIR/nodi-libs"
+    git clone https://github.com/nodiinc/nodi-libs.git "$PARENT_DIR/nodi-libs"
 fi
 
 if [ ! -d "$PARENT_DIR/nodi-databus" ]; then
-    git clone git@github.com:yourname/nodi-databus.git "$PARENT_DIR/nodi-databus"
+    git clone https://github.com/nodiinc/nodi-databus.git "$PARENT_DIR/nodi-databus"
 fi
 
 # Install dependency libraries
