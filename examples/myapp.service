@@ -1,0 +1,37 @@
+# Example systemd service file for nodi-edge app
+# Copy to /etc/systemd/system/myapp.service and customize
+#
+# Commands:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable myapp
+#   sudo systemctl start myapp
+#   sudo systemctl status myapp
+#   journalctl -u myapp -f
+
+[Unit]
+Description=My Nodi Edge App
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/nodi-edge/apps/myapp
+ExecStart=/root/venv/bin/python3 main.py
+
+# Restart policy
+Restart=always
+RestartSec=10s
+
+# Prevent restart loops (5 failures in 5 minutes = stop)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Logging (optional - use journalctl instead of file logging)
+# StandardOutput=append:/var/log/myapp.log
+# StandardError=append:/var/log/myapp.log
+
+[Install]
+WantedBy=multi-user.target

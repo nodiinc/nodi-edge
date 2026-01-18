@@ -7,17 +7,30 @@ from enum import Enum, auto
 class AppState(Enum):
     """Application lifecycle states.
 
-    State transitions:
-        PREPARE → INITIATE → EXECUTE ↔ (loop)
-                     ↑          ↓
-                     └── TERMINATE
+    State flow:
+        PREPARE → CONFIGURE → CONNECT → EXECUTE ↔ (loop)
+                                 ↑          ↓
+                                 │      [exception]
+                                 │          ↓
+                                 │       RECOVER ─── (success) ──→ EXECUTE
+                                 │          ↓ (fail)
+                                 └───── DISCONNECT
+                                           ↓
+                                     [retry delay]
 
-    - PREPARE: One-time setup (logger, databus creation)
-    - INITIATE: Connection and initialization (databus connect, resource setup)
+    Fatal errors (PREPARE/CONFIGURE fail):
+        → sys.exit(1) → systemctl restarts
+
+    - PREPARE: One-time setup (databus creation) - fatal on error
+    - CONFIGURE: Configuration loading - fatal on error
+    - CONNECT: Connection/server start (databus connect)
     - EXECUTE: Main loop (tag publish/subscribe, business logic)
-    - TERMINATE: Error recovery and cleanup (before retry INITIATE)
+    - RECOVER: Error recovery attempt (success → EXECUTE, fail → DISCONNECT)
+    - DISCONNECT: Resource cleanup (databus disconnect)
     """
     PREPARE = auto()
-    INITIATE = auto()
+    CONFIGURE = auto()
+    CONNECT = auto()
     EXECUTE = auto()
-    TERMINATE = auto()
+    RECOVER = auto()
+    DISCONNECT = auto()

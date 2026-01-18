@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+import signal
+import sys
 import time
+from collections import deque
+from dataclasses import dataclass, field
 from traceback import format_exc
-from typing import Optional
+from contextlib import contextmanager
+from typing import Deque, Generator, Optional
 
 from nodi_databus import Databus
 from nodi_libs.fsm import FiniteStateMachine
-from nodi_libs.logger import Logger, LoggingLevel
+from nodi_libs.logger import Logger, LoggerConfig, LoggingLevel
+from nodi_libs.timer import PeriodicTimer
 
 from nodi_edge.states import AppState
 
@@ -16,9 +23,83 @@ from nodi_edge.states import AppState
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _DEFAULT_DOMAIN_ID = "default"
-_DEFAULT_RETRY_DELAY_S = 3.0
-_DEFAULT_EXECUTE_INTERVAL_S = 1.0
-_DEFAULT_EXCEPTION_LIMIT = 10
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Configs
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@dataclass
+class AppConfig:
+    execute_interval_s: float = 1.0
+    manage_interval_s: float = 1.0
+    retry_delay_s: float = 3.0
+    pause_time_s: float = 0.0
+    exception_limit: int = 1
+    maf_size: int = 60
+    time_decimal: int = 6
+    suppress_stdout: bool = False
+    process_title: str = "ne-{app_id}"
+
+
+@dataclass
+class LoggingFlags:
+    stages: bool = True
+    fallback: bool = True
+    traceback: bool = True
+
+
+@dataclass
+class AppLoggerConfig(LoggerConfig):
+    name: str = "ne-{app_id}"
+    file_out: bool = True
+    file_path: str = "./log/ne-{app_id}.log"
+    logging_flags: LoggingFlags = field(default_factory=LoggingFlags)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Utils
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class MovingAverage:
+
+    def __init__(self, size: int = 10, decimal: int = 4):
+        self.size = size
+        self.decimal = decimal
+        self._samples: Deque[float] = deque()
+        self._sum: float = 0.0
+        self.mean: float = 0.0
+
+    def add(self, sample: float) -> None:
+        self._samples.append(sample)
+        self._sum += sample
+        if len(self._samples) > self.size:
+            self._sum -= self._samples.popleft()
+        self.mean = round(self._sum / len(self._samples), self.decimal)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Statistics
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+@dataclass
+class StageStatistics:
+    elapsed_time: float = 0.0
+    done: bool = False
+
+
+@dataclass
+class AppStatistics:
+    prepare: StageStatistics = field(default_factory=StageStatistics)
+    configure: StageStatistics = field(default_factory=StageStatistics)
+    connect: StageStatistics = field(default_factory=StageStatistics)
+    execute: StageStatistics = field(default_factory=StageStatistics)
+    recover: StageStatistics = field(default_factory=StageStatistics)
+    disconnect: StageStatistics = field(default_factory=StageStatistics)
+    execute_maf: MovingAverage = field(default_factory=MovingAverage)
+    exception_count: int = 0
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # App
@@ -30,34 +111,46 @@ class App:
                  app_id: str,
                  domain_id: str = _DEFAULT_DOMAIN_ID,
                  *,
-                 retry_delay_s: float = _DEFAULT_RETRY_DELAY_S,
-                 execute_interval_s: float = _DEFAULT_EXECUTE_INTERVAL_S,
-                 exception_limit: int = _DEFAULT_EXCEPTION_LIMIT,
-                 logging_level: LoggingLevel = LoggingLevel.INFO,
-                 console_out: bool = True,
-                 file_out: bool = False,
-                 log_file_path: Optional[str] = None) -> None:
+                 app_config: Optional[AppConfig] = None,
+                 logger_config: Optional[AppLoggerConfig] = None) -> None:
+
+        # Config
+        self._app_conf = app_config or AppConfig()
+        self._log_conf = logger_config or AppLoggerConfig()
+        self._log_conf.name = self._log_conf.name.format(app_id=app_id)
+        self._log_conf.file_path = self._log_conf.file_path.format(app_id=app_id)
 
         # Parameters
         self._app_id = app_id
         self._domain_id = domain_id
-        self._retry_delay_s = retry_delay_s
-        self._execute_interval_s = execute_interval_s
-        self._exception_limit = exception_limit
 
-        # Stats
-        self._exception_count: int = 0
-        self._execute_count: int = 0
+        # Suppress stdout
+        if self._app_conf.suppress_stdout:
+            sys.stdout = open(os.devnull, "w")
+            sys.stderr = open(os.devnull, "w")
+
+        # Set process title
+        try:
+            from setproctitle import setproctitle
+            setproctitle(self._app_conf.process_title.format(app_id=app_id))
+        except ImportError:
+            pass
 
         # Logger
-        self._logger = Logger(logger_name=f"nodi-edge.{app_id}",
-                              logging_level=logging_level,
-                              console_out=console_out,
-                              file_out=file_out,
-                              file_path=log_file_path or f"./log/{app_id}.log")
+        self._logger = Logger(self._log_conf)
 
-        # Databus (not connected yet)
+        # Databus
         self._databus: Optional[Databus] = None
+
+        # Stats
+        self._app_statistics = AppStatistics(
+            execute_maf=MovingAverage(size=self._app_conf.maf_size,
+            decimal=self._app_conf.time_decimal))
+
+        # Timers
+        self._execute_timer = PeriodicTimer(self._app_conf.execute_interval_s)
+        self._manage_timer = PeriodicTimer(self._app_conf.manage_interval_s)
+        self._retry_timer = PeriodicTimer(self._app_conf.retry_delay_s)
 
         # FSM
         self._fsm = FiniteStateMachine()
@@ -80,6 +173,10 @@ class App:
         return self._logger
 
     @property
+    def stats(self) -> AppStatistics:
+        return self._app_statistics
+
+    @property
     def fsm(self) -> FiniteStateMachine:
         return self._fsm
 
@@ -92,57 +189,194 @@ class App:
         return self._fsm.is_running
 
     # ────────────────────────────────────────────────────────────
+    # Helpers
+    # ────────────────────────────────────────────────────────────
+
+    @contextmanager
+    def _measure_time(self, stage: StageStatistics) -> Generator[None, None, None]:
+        start_time = time.perf_counter()
+        yield
+        stage.elapsed_time = round(time.perf_counter() - start_time,
+                                   self._app_conf.time_decimal)
+
+    def _log_fallback(self, location: str, exc: Exception) -> None:
+        if self._app_statistics.exception_count <= self._app_conf.exception_limit:
+            if self._log_conf.logging_flags.fallback:
+                self._logger.warning(f"loc: {location} | "
+                                     f"err: {exc} | "
+                                     f"cnt: {self._app_statistics.exception_count}/"
+                                     f"{self._app_conf.exception_limit}")
+            if self._log_conf.logging_flags.traceback:
+                self._logger.debug(format_exc())
+
+    def _reset_done_flags_for_retry(self) -> None:
+        self._app_statistics.connect.done = False
+        self._app_statistics.execute.done = False
+
+    def _reset_done_flags_for_success(self) -> None:
+        self._app_statistics.recover.done = False
+        self._app_statistics.disconnect.done = False
+        self._app_statistics.exception_count = 0
+
+    # ────────────────────────────────────────────────────────────
     # FSM Setup
     # ────────────────────────────────────────────────────────────
 
     def _setup_fsm(self) -> None:
 
-        # Limit transitions
-        self._fsm.limit_transitions({
-            AppState.PREPARE: [AppState.INITIATE],
-            AppState.INITIATE: [AppState.EXECUTE, AppState.TERMINATE],
-            AppState.EXECUTE: [AppState.EXECUTE, AppState.TERMINATE],
-            AppState.TERMINATE: [AppState.INITIATE],
-        })
+        self._fsm.limit_transitions({AppState.PREPARE: [AppState.CONFIGURE],
+                                     AppState.CONFIGURE: [AppState.CONNECT],
+                                     AppState.CONNECT: [AppState.EXECUTE, AppState.RECOVER],
+                                     AppState.EXECUTE: [AppState.RECOVER],
+                                     AppState.RECOVER: [AppState.EXECUTE, AppState.DISCONNECT],
+                                     AppState.DISCONNECT: [AppState.CONNECT],})
 
-        # State handlers
         @self._fsm.state(AppState.PREPARE)
         def prepare_handler():
-            self._on_prepare()
-            self._fsm.transition(AppState.INITIATE)
-
-        @self._fsm.state(AppState.INITIATE)
-        def initiate_handler():
             try:
-                self._on_initiate()
-                self._exception_count = 0
-                self._fsm.transition(AppState.EXECUTE)
+                with self._measure_time(self._app_statistics.prepare):
+                    self._databus = Databus(self._app_id, self._domain_id)
+                    self.on_prepare()
+
+                    # One-time log
+                    if not self._app_statistics.prepare.done:
+                        self._app_statistics.prepare.done = True
+                        if self._log_conf.logging_flags.stages:
+                            self._logger.info("prepared")
+
+                    if self._app_conf.pause_time_s > 0:
+                        time.sleep(self._app_conf.pause_time_s)
+
+                    self._fsm.transition(AppState.CONFIGURE)
             except Exception as exc:
-                self._handle_exception("initiate", exc)
-                self._fsm.transition(AppState.TERMINATE)
+                self._app_statistics.exception_count += 1
+                self._logger.error(f"prepare failed: {exc}")
+                self._logger.debug(format_exc())
+                self._fsm.stop()
+                sys.exit(1)
+
+        @self._fsm.state(AppState.CONFIGURE)
+        def configure_handler():
+            try:
+                with self._measure_time(self._app_statistics.configure):
+                    if self._databus and self._databus.is_app_running():
+                        self._logger.critical(f"app already running: {self._app_id}")
+                        self._fsm.stop()
+                        sys.exit(1)
+
+                    self.on_configure()
+
+                    # One-time log
+                    if not self._app_statistics.configure.done:
+                        self._app_statistics.configure.done = True
+                        if self._log_conf.logging_flags.stages:
+                            self._logger.info("configured")
+
+                    self._fsm.transition(AppState.CONNECT)
+            except Exception as exc:
+                self._app_statistics.exception_count += 1
+                self._logger.error(f"configure failed: {exc}")
+                self._logger.debug(format_exc())
+                self._fsm.stop()
+                sys.exit(1)
+
+        @self._fsm.state(AppState.CONNECT)
+        def connect_handler():
+            if self._app_statistics.exception_count >= 1:
+                self._retry_timer.wait()
+
+            try:
+                with self._measure_time(self._app_statistics.connect):
+                    if self._databus:
+                        self._databus.connect(clean=True)
+                    self.on_connect()
+
+                    # One-time log
+                    if not self._app_statistics.connect.done:
+                        self._app_statistics.connect.done = True
+                        if self._log_conf.logging_flags.stages:
+                            self._logger.info("connected")
+
+                    self._execute_timer.reset()
+                    self._fsm.transition(AppState.EXECUTE)
+            except Exception as exc:
+                self._app_statistics.exception_count += 1
+                self._log_fallback("connect", exc)
+                self._fsm.transition(AppState.RECOVER)
 
         @self._fsm.state(AppState.EXECUTE)
         def execute_handler():
-            try:
-                self._on_execute()
-                self._execute_count += 1
-                self._exception_count = 0
-                time.sleep(self._execute_interval_s)
-                self._fsm.transition(AppState.EXECUTE)
-            except Exception as exc:
-                self._handle_exception("execute", exc)
-                self._fsm.transition(AppState.TERMINATE)
+            while self._fsm.is_running:
+                try:
+                    with self._measure_time(self._app_statistics.execute):
+                        self.on_execute()
+                        self._app_statistics.execute_maf.add(self._app_statistics.execute.elapsed_time)
 
-        @self._fsm.state(AppState.TERMINATE)
-        def terminate_handler():
-            try:
-                self._on_terminate()
-            except Exception as exc:
-                self._logger.warning(f"terminate error: {exc}")
+                        # One-time log
+                        if not self._app_statistics.execute.done:
+                            self._app_statistics.execute.done = True
+                            if self._log_conf.logging_flags.stages:
+                                self._logger.info("executing")
+                            self._reset_done_flags_for_success()
 
-            # Retry delay
-            time.sleep(self._retry_delay_s)
-            self._fsm.transition(AppState.INITIATE)
+                        # Wait for next cycle
+                        self._execute_timer.wait()
+
+                except Exception as exc:
+                    self._app_statistics.exception_count += 1
+                    self._log_fallback("execute", exc)
+                    self._fsm.transition(AppState.RECOVER)
+                    break
+
+        @self._fsm.state(AppState.RECOVER)
+        def recover_handler():
+            try:
+                with self._measure_time(self._app_statistics.recover):
+                    self.on_recover()
+
+                    # One-time log
+                    if not self._app_statistics.recover.done:
+                        self._app_statistics.recover.done = True
+                        if self._log_conf.logging_flags.stages:
+                            self._logger.warning("recovering")
+
+                    # Recovery success → back to EXECUTE
+                    self._reset_done_flags_for_success()
+                    self._execute_timer.reset()
+                    self._fsm.transition(AppState.EXECUTE)
+
+            except Exception as exc:
+                self._log_fallback("recover", exc)
+                # Recovery fail → DISCONNECT
+                self._fsm.transition(AppState.DISCONNECT)
+
+        @self._fsm.state(AppState.DISCONNECT)
+        def disconnect_handler():
+            # Call on_disconnect callback (before databus disconnect)
+            try:
+                with self._measure_time(self._app_statistics.disconnect):
+                    self.on_disconnect()
+
+                    # One-time log
+                    if not self._app_statistics.disconnect.done:
+                        self._app_statistics.disconnect.done = True
+                        if self._log_conf.logging_flags.stages:
+                            self._logger.info("disconnected")
+
+            except Exception as exc:
+                self._log_fallback("disconnect", exc)
+
+            # Disconnect databus (always, even if on_disconnect failed)
+            if self._databus:
+                try:
+                    self._databus.disconnect()
+                except Exception:
+                    pass
+
+            # Reset flags for retry
+            self._reset_done_flags_for_retry()
+            self._retry_timer.reset()
+            self._fsm.transition(AppState.CONNECT)
 
         # Error callback
         @self._fsm.on_error()
@@ -156,77 +390,34 @@ class App:
             self._logger.debug(f"state: {prev} -> {next}")
 
     # ────────────────────────────────────────────────────────────
-    # Internal Handlers
-    # ────────────────────────────────────────────────────────────
-
-    def _on_prepare(self) -> None:
-        self._logger.info(f"preparing app: {self._app_id}")
-
-        # Create databus instance
-        self._databus = Databus(self._app_id, self._domain_id)
-
-        # Override point
-        self.on_prepare()
-
-    def _on_initiate(self) -> None:
-        self._logger.info(f"initiating app: {self._app_id}")
-
-        # Connect databus
-        if self._databus:
-            self._databus.connect()
-
-        # Override point
-        self.on_initiate()
-
-    def _on_execute(self) -> None:
-        # Override point
-        self.on_execute()
-
-    def _on_terminate(self) -> None:
-        self._logger.warning(f"terminating app: {self._app_id}")
-
-        # Disconnect databus
-        if self._databus:
-            try:
-                self._databus.disconnect()
-            except Exception:
-                pass
-
-        # Override point
-        self.on_terminate()
-
-    def _handle_exception(self, loc: str, exc: Exception) -> None:
-        self._exception_count += 1
-        if self._exception_count <= self._exception_limit:
-            self._logger.warning(f"loc: {loc} | "
-                                 f"err: {exc} | "
-                                 f"cnt: {self._exception_count}/{self._exception_limit}")
-            self._logger.debug(format_exc())
-
-    # ────────────────────────────────────────────────────────────
-    # Override Points
-    # ────────────────────────────────────────────────────────────
-
-    def on_prepare(self) -> None:
-        pass
-
-    def on_initiate(self) -> None:
-        pass
-
-    def on_execute(self) -> None:
-        pass
-
-    def on_terminate(self) -> None:
-        pass
-
-    # ────────────────────────────────────────────────────────────
     # Lifecycle
     # ────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        self._fsm.start(AppState.PREPARE)
+        # Register SIGTERM handler for graceful shutdown
+        signal.signal(signal.SIGTERM, self._sigterm_handler)
 
-    def stop(self, timeout: float = 5.0) -> None:
+        self._fsm.start(AppState.PREPARE)
+        try:
+            while self._fsm.is_running:
+                self._manage_timer.wait()
+                self._do_manage()
+        except KeyboardInterrupt:
+            self._logger.info("keyboard interrupt received")
+        finally:
+            self._stop()
+
+    def _sigterm_handler(self, _signum: int, _frame) -> None:
+        self._logger.info("SIGTERM received")
+        self._fsm.stop()
+
+    def _do_manage(self) -> None:
+        try:
+            self.on_manage()
+        except Exception as exc:
+            self._log_fallback("manage", exc)
+
+    def _stop(self, timeout: float = 5.0) -> None:
         self._fsm.stop(timeout)
 
         # Cleanup databus
@@ -236,14 +427,27 @@ class App:
             except Exception:
                 pass
 
-    def run(self) -> None:
-        self.start()
+    # ────────────────────────────────────────────────────────────
+    # Override Points
+    # ────────────────────────────────────────────────────────────
 
-        # Block until stopped
-        try:
-            while self._fsm.is_running:
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            self._logger.info("keyboard interrupt received")
-        finally:
-            self.stop()
+    def on_prepare(self) -> None:
+        pass
+
+    def on_configure(self) -> None:
+        pass
+
+    def on_connect(self) -> None:
+        pass
+
+    def on_execute(self) -> None:
+        pass
+
+    def on_recover(self) -> None:
+        pass
+
+    def on_disconnect(self) -> None:
+        pass
+
+    def on_manage(self) -> None:
+        pass
