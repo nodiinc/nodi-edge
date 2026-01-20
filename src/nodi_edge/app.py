@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import argparse
 import os
 import signal
 import sys
@@ -23,6 +24,7 @@ from nodi_edge.states import AppState
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _DEFAULT_DOMAIN_ID = "default"
+_DATA_DIR = "/home/nodi/nodi-edge-data"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,7 +55,7 @@ class LoggingFlags:
 class AppLoggerConfig(LoggerConfig):
     name: str = "ne-{app_id}"
     file_out: bool = True
-    file_path: str = "./log/ne-{app_id}.log"
+    file_path: str = f"{_DATA_DIR}/log/ne-{{app_id}}.log"
     logging_flags: LoggingFlags = field(default_factory=LoggingFlags)
 
 
@@ -114,6 +116,9 @@ class App:
                  app_config: Optional[AppConfig] = None,
                  logger_config: Optional[AppLoggerConfig] = None) -> None:
 
+        # Parse CLI arguments
+        self._cli_args = self._parse_cli_args()
+
         # Config
         self._app_conf = app_config or AppConfig()
         self._log_conf = logger_config or AppLoggerConfig()
@@ -124,8 +129,8 @@ class App:
         self._app_id = app_id
         self._domain_id = domain_id
 
-        # Suppress stdout
-        if self._app_conf.suppress_stdout:
+        # Suppress stdout (disabled if debug mode)
+        if self._app_conf.suppress_stdout and not self._cli_args.debug:
             sys.stdout = open(os.devnull, "w")
             sys.stderr = open(os.devnull, "w")
 
@@ -155,6 +160,15 @@ class App:
         # FSM
         self._fsm = FiniteStateMachine()
         self._setup_fsm()
+
+    def _parse_cli_args(self) -> argparse.Namespace:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--clean", action="store_true",
+                            help="clean databus state on connect")
+        parser.add_argument("--debug", action="store_true",
+                            help="enable databus debug output")
+        args, _ = parser.parse_known_args()
+        return args
 
     # ────────────────────────────────────────────────────────────
     # Properties
@@ -235,7 +249,9 @@ class App:
         def prepare_handler():
             try:
                 with self._measure_time(self._app_statistics.prepare):
-                    self._databus = Databus(self._app_id, self._domain_id)
+                    self._databus = Databus(self._app_id, self._domain_id,
+                                            debug=self._cli_args.debug,
+                                            heartbeat_interval_s=1.0)
                     self.on_prepare()
 
                     # One-time log
@@ -288,7 +304,7 @@ class App:
             try:
                 with self._measure_time(self._app_statistics.connect):
                     if self._databus:
-                        self._databus.connect(clean=True)
+                        self._databus.connect(clean=self._cli_args.clean)
                     self.on_connect()
 
                     # One-time log
