@@ -15,8 +15,8 @@ import psutil
 from nodi_libs import MqttClient, MqttTransportType, OtaManager, OtaConfig, OtaStatus
 
 from nodi_edge import App, AppConfig
-from nodi_edge.config import (CLOUD_SERVER, TOPIC_FORMATS, OTA_BACKUP_DIR,
-                               get_serial_number)
+from nodi_edge.config import OTA_BACKUP_DIR, get_serial_number
+from config import CLOUD_SERVER, TOPIC_FORMATS
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -25,6 +25,7 @@ from nodi_edge.config import (CLOUD_SERVER, TOPIC_FORMATS, OTA_BACKUP_DIR,
 
 @dataclass
 class CloudConfig:
+    
     # MQTT connection
     host: str = CLOUD_SERVER.host
     port: int = CLOUD_SERVER.port

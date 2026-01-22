@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional, TypeVar
 
 from nodi_libs import SystemInfo, Result
@@ -38,6 +39,8 @@ class MonitorApp(App):
     def on_connect(self) -> None:
         self._static_published = False
         self._speedtest_cycle_count = 0
+        self._sysinfo.measure_internet_speed()
+        self.logger.info("speedtest started (on connect)")
 
     def on_execute(self) -> None:
         if not self._static_published:
@@ -86,6 +89,7 @@ class MonitorApp(App):
             f"{self.app_id}/system/os_type": self._get_value(self._sysinfo.get_system_os_type()),
             f"{self.app_id}/system/os_version": self._get_value(self._sysinfo.get_system_os_version()),
             f"{self.app_id}/system/python_version": self._get_value(self._sysinfo.get_system_python_version()),
+            f"{self.app_id}/time/app_start_ts": datetime.fromtimestamp(self._app_start_time).isoformat(),
             f"{self.app_id}/time/system_boot_ts": self._get_value(self._sysinfo.get_time_system_boot_ts()),
             f"{self.app_id}/time/zone": self._get_value(self._sysinfo.get_time_zone()),
         }

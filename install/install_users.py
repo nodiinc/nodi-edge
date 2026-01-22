@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""nodi-edge installer script."""
+"""Install user accounts for nodi-edge."""
 from __future__ import annotations
 
+import getpass
+import os
+import grp
+import pwd
 import subprocess
 import sys
-import os
-import pwd
-import grp
-import getpass
 from pathlib import Path
+
+from tool import head, desc, info, warn, fail, done
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -48,7 +50,6 @@ GUEST_ALLOWED_COMMANDS = [
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    print(f"  > {' '.join(cmd)}")
     return subprocess.run(cmd, check=check, capture_output=True, text=True)
 
 
@@ -66,7 +67,7 @@ def prompt_password(username: str) -> str:
         pw2 = getpass.getpass(f"  Confirm password for '{username}': ")
         if pw1 == pw2:
             return pw1
-        print("  Passwords do not match. Try again.")
+        warn("Passwords do not match. Try again.")
 
 
 def set_password(username: str, password: str) -> None:
@@ -77,101 +78,140 @@ def set_password(username: str, password: str) -> None:
     proc.communicate(input=f"{username}:{password}".encode())
 
 
+def chown_recursive(path: Path, uid: int, gid: int) -> None:
+    os.chown(path, uid, gid)
+    for child in path.rglob("*"):
+        os.chown(child, uid, gid)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Check root privilege
+# Installation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+head("Install Users")
+
+
+# ────────────────────────────────────────────────────────────
+# Check Prerequisites
+# ────────────────────────────────────────────────────────────
+
+desc("Check Prerequisites")
 
 if os.geteuid() != 0:
-    print("Error: This script must be run as root.")
-    print("Usage: sudo python3 install.py")
+    fail("This script must be run as root.")
+    info("Usage: sudo python3 install_users.py")
     sys.exit(1)
 
-print("=" * 60)
-print("nodi-edge Installer")
-print("=" * 60)
+info("Running as root.")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [1/5] Setup nodi user
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ────────────────────────────────────────────────────────────
+# Create Nodi User
+# ────────────────────────────────────────────────────────────
 
-print("\n[1/5] Setting up 'nodi' user...")
+desc("Create Nodi User")
 
 if user_exists(USER_NODI):
-    print(f"  User '{USER_NODI}' already exists. Skipping creation.")
+    info(f"User '{USER_NODI}' already exists.")
 else:
     run(["useradd", "-m", "-s", "/bin/bash", USER_NODI])
-    print(f"  User '{USER_NODI}' created.")
-
+    info(f"User '{USER_NODI}' created.")
     password = prompt_password(USER_NODI)
     set_password(USER_NODI, password)
-    print(f"  Password set for '{USER_NODI}'.")
+    done("Password set.")
 
-# Restrict nodi home directory (prevent guest access)
+
+# ────────────────────────────────────────────────────────────
+# Restrict Nodi Home
+# ────────────────────────────────────────────────────────────
+
+desc("Restrict Nodi Home")
+
 nodi_home = Path(f"/home/{USER_NODI}")
 run(["chmod", "750", str(nodi_home)])
-print(f"  Home directory restricted (750, no access for others).")
+info(f"{nodi_home} (750)")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [2/5] Setup guest user
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ────────────────────────────────────────────────────────────
+# Create Guest User
+# ────────────────────────────────────────────────────────────
 
-print("\n[2/5] Setting up 'guest' user...")
+desc("Create Guest User")
 
 if user_exists(USER_GUEST):
-    print(f"  User '{USER_GUEST}' already exists. Skipping creation.")
+    info(f"User '{USER_GUEST}' already exists.")
 else:
     run(["useradd", "-m", "-s", "/bin/rbash", USER_GUEST])
-    print(f"  User '{USER_GUEST}' created with restricted shell.")
-
+    info(f"User '{USER_GUEST}' created (rbash).")
     password = prompt_password(USER_GUEST)
     set_password(USER_GUEST, password)
-    print(f"  Password set for '{USER_GUEST}'.")
+    done("Password set.")
 
-# Create bin directory for allowed commands
+
+# ────────────────────────────────────────────────────────────
+# Setup Guest Commands
+# ────────────────────────────────────────────────────────────
+
+desc("Setup Guest Commands")
+
 GUEST_BIN_DIR.mkdir(parents=True, exist_ok=True)
 
-# Clear old symlinks and re-create (force re-apply)
+# Clear old symlinks
 for existing in GUEST_BIN_DIR.iterdir():
     if existing.is_symlink():
         existing.unlink()
-print("  Cleared old command links.")
 
 # Link allowed commands
+linked_count = 0
 for cmd_path in GUEST_ALLOWED_COMMANDS:
     cmd = Path(cmd_path)
     if cmd.exists():
         link_path = GUEST_BIN_DIR / cmd.name
         link_path.symlink_to(cmd)
-        print(f"  Linked: {cmd.name}")
+        linked_count += 1
     else:
-        print(f"  Warning: {cmd_path} not found, skipping.")
+        warn(f"{cmd_path} not found.")
 
-# Unlock .bashrc if immutable (for re-apply)
+info(f"{linked_count} commands linked.")
+
+
+# ────────────────────────────────────────────────────────────
+# Configure Guest Bashrc
+# ────────────────────────────────────────────────────────────
+
+desc("Configure Guest Bashrc")
+
 bashrc_path = Path(f"/home/{USER_GUEST}/.bashrc")
+
+# Unlock if immutable
 run(["chattr", "-i", str(bashrc_path)], check=False)
 
-# Overwrite .bashrc with restricted PATH
-bashrc_path.write_text(f"# Restricted PATH (auto-generated by install.py)\nexport PATH={GUEST_BIN_DIR}\n")
-print("  .bashrc configured with restricted PATH.")
+# Overwrite with restricted PATH
+bashrc_path.write_text(f"export PATH={GUEST_BIN_DIR}\n")
+info(f"{bashrc_path}")
 
-# Make .bashrc immutable
+# Lock bashrc
 run(["chattr", "+i", str(bashrc_path)], check=False)
-print("  .bashrc locked (immutable).")
+info("Locked (immutable).")
 
-# Make home directory read-only for guest (force re-apply)
+
+# ────────────────────────────────────────────────────────────
+# Restrict Guest Home
+# ────────────────────────────────────────────────────────────
+
+desc("Restrict Guest Home")
+
 guest_home = Path(f"/home/{USER_GUEST}")
 run(["chown", "root:root", str(guest_home)])
 run(["chmod", "755", str(guest_home)])
-print("  Home directory set to read-only (owned by root).")
+info(f"{guest_home} (755, root:root)")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [3/5] Setup data directory
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ────────────────────────────────────────────────────────────
+# Create Data Directory
+# ────────────────────────────────────────────────────────────
 
-print("\n[3/5] Setting up data directory...")
+desc("Create Data Directory")
 
 dirs = [
     DATA_DIR / "backup",
@@ -183,30 +223,29 @@ dirs = [
 
 for d in dirs:
     d.mkdir(parents=True, exist_ok=True)
-    print(f"  Created: {d}")
+    info(f"{d}")
 
-# Set ownership to nodi (force re-apply)
+
+# ────────────────────────────────────────────────────────────
+# Set Data Ownership
+# ────────────────────────────────────────────────────────────
+
+desc("Set Data Ownership")
+
 uid = pwd.getpwnam(USER_NODI).pw_uid
 gid = grp.getgrnam(USER_NODI).gr_gid
-
-def chown_recursive(path: Path, uid: int, gid: int) -> None:
-    os.chown(path, uid, gid)
-    for child in path.rglob("*"):
-        os.chown(child, uid, gid)
-
 chown_recursive(DATA_DIR, uid, gid)
-print(f"  Ownership set to '{USER_NODI}' (recursive).")
+info(f"{DATA_DIR} -> {USER_NODI}:{USER_NODI}")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [4/5] Setup sudoers for nodi
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ────────────────────────────────────────────────────────────
+# Setup Sudoers
+# ────────────────────────────────────────────────────────────
 
-print("\n[4/5] Setting up sudoers for 'nodi'...")
+desc("Setup Sudoers")
 
-sudoers_content = """# nodi-edge service management (auto-generated by install.py)
-# Allow nodi to manage nodi-edge services without password
-
+sudoers_content = """\
+# nodi-edge service management
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl start ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl stop ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl restart ne-*
@@ -219,55 +258,14 @@ nodi ALL=(root) NOPASSWD: /usr/bin/journalctl -u ne-*
 
 SUDOERS_FILE.write_text(sudoers_content)
 run(["chmod", "440", str(SUDOERS_FILE)])
-print(f"  Created: {SUDOERS_FILE}")
-print("  nodi can now manage ne-* services without password.")
+info(f"{SUDOERS_FILE}")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [5/5] Summary
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ────────────────────────────────────────────────────────────
+# Done
+# ────────────────────────────────────────────────────────────
 
-print("\n[5/5] Installation complete!")
-print("\n" + "=" * 60)
-print("SUMMARY")
-print("=" * 60)
-print("""
-Account Structure:
-┌─────────────────────────────────────────────────────────┐
-│ guest (restricted)                                      │
-│ - SSH login: ssh guest@<host>                           │
-│ - Network: ping, ip, netstat, traceroute, ss            │
-│ - System: df, free, uptime, ps, top, vmstat, iostat, w  │
-│ - Cannot switch to other users                          │
-│ - Home directory is read-only                           │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│ nodi (service account)                                  │
-│ - SSH login: ssh nodi@<host>                            │
-│ - Service management (sudo systemctl start/stop ne-*)   │
-│ - Config editing, log access                            │
-│ - Can switch to root: su root                           │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│ root (admin)                                            │
-│ - Access via: su root (from nodi account)               │
-│ - Full system access                                    │
-└─────────────────────────────────────────────────────────┘
-
-Data Directory:
-  /home/nodi/nodi-edge-data/
-  ├── backup/              # Cloud sync target
-  ├── config/
-  │   ├── apps/            # App-specific settings
-  │   └── interfaces/      # Interface config files
-  ├── data/
-  │   └── snapshots/       # Databus snapshots
-  └── log/                 # Log files
-
-Sudoers (nodi can run without password):
-  sudo systemctl start|stop|restart|status|enable|disable ne-*
-  sudo systemctl daemon-reload
-  sudo journalctl -u ne-*
-""")
+desc("Done")
+info(f"nodi={USER_NODI}")
+info(f"guest={USER_GUEST}")
+info(f"data={DATA_DIR}")
