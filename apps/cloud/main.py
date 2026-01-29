@@ -225,7 +225,7 @@ class CloudApp(App):
             f"{self.app_id}/_meta/mqtt_connected": is_connected,
             f"{self.app_id}/_meta/exception_count": self.stats.exception_count
         })
-        self.databus.apply()
+        self.databus.commit()
 
     # ────────────────────────────────────────────────────────────
     # MQTT Callbacks

@@ -12,7 +12,7 @@ from traceback import format_exc
 from contextlib import contextmanager
 from typing import Deque, Generator, Optional
 
-from nodi_databus import Databus
+from tagbus import TagBus
 from nodi_libs.fsm import FiniteStateMachine
 from nodi_libs.logger import Logger, LoggerConfig, LoggingLevel
 from nodi_libs.timer import PeriodicTimer
@@ -144,8 +144,8 @@ class App:
         # Logger
         self._logger = Logger(self._log_conf)
 
-        # Databus
-        self._databus: Optional[Databus] = None
+        # TagBus
+        self._databus: Optional[TagBus] = None
 
         # Stats
         self._app_statistics = AppStatistics(
@@ -179,7 +179,7 @@ class App:
         return self._app_id
 
     @property
-    def databus(self) -> Optional[Databus]:
+    def databus(self) -> Optional[TagBus]:
         return self._databus
 
     @property
@@ -219,9 +219,10 @@ class App:
                 self._logger.warning(f"loc: {location} | "
                                      f"err: {exc} | "
                                      f"cnt: {self._app_statistics.exception_count}/"
-                                     f"{self._app_conf.exception_limit}")
+                                     f"{self._app_conf.exception_limit}",
+                                     stacklevel=3)
             if self._log_conf.logging_flags.traceback:
-                self._logger.debug(format_exc())
+                self._logger.debug(format_exc(), stacklevel=3)
 
     def _reset_done_flags_for_retry(self) -> None:
         self._app_statistics.connect.done = False
@@ -249,7 +250,7 @@ class App:
         def prepare_handler():
             try:
                 with self._measure_time(self._app_statistics.prepare):
-                    self._databus = Databus(self._app_id, self._domain_id,
+                    self._databus = TagBus(self._app_id, self._domain_id,
                                             debug=self._cli_args.debug,
                                             heartbeat_interval_s=1.0)
                     self.on_prepare()
@@ -275,7 +276,7 @@ class App:
         def configure_handler():
             try:
                 with self._measure_time(self._app_statistics.configure):
-                    if self._databus and self._databus.is_app_running():
+                    if self._databus and self._databus.is_running:
                         self._logger.critical(f"app already running: {self._app_id}")
                         self._fsm.stop()
                         sys.exit(1)
@@ -357,7 +358,6 @@ class App:
                             self._logger.warning("recovering")
 
                     # Recovery success → back to EXECUTE
-                    self._reset_done_flags_for_success()
                     self._execute_timer.reset()
                     self._fsm.transition(AppState.EXECUTE)
 

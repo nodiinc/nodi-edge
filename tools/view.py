@@ -18,8 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from nodi_databus import Databus
-from nodi_databus.databus import TagCache
+from tagbus import TagBus, TagCache
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -55,17 +54,26 @@ class TagSnapshot:
 
 class TagView:
 
+    _DOMAIN_ID = "default"
+    _STATE_DIR = Path("/var/lib/nodi-databus") / _DOMAIN_ID
+    _SNAPSHOT_FILE = _STATE_DIR / "view_snapshot.json"
+
     def __init__(self,
                  app_id: str = "view",
                  patterns: Optional[List[TagPattern]] = None):
         self._app_id = app_id
         self._patterns = patterns or ["**"]
-        self._databus: Optional[Databus] = None
+        self._databus: Optional[TagBus] = None
         self._lock = threading.Lock()
 
         # Tag cache
         self._tags: Dict[TagId, TagSnapshot] = {}
         self._updated_tags: Set[TagId] = set()
+
+        # Snapshot for persistence
+        self._snapshot: Dict[TagId, TagCache] = {}
+        self._last_snapshot_ts: float = 0.0
+        self._snapshot_interval_s: float = 5.0
 
         # Callbacks
         self._on_update: Optional[Callable[[TagId, TagSnapshot], None]] = None
@@ -80,8 +88,11 @@ class TagView:
             return len(self._tags)
 
     def connect(self, initial_wait_s: float = 1.0) -> None:
-        self._databus = Databus(self._app_id, debug=False)
-        self._databus.connect(clean=True)
+        # Load previously saved snapshot
+        saved_snapshot = self._load_snapshot()
+
+        self._databus = TagBus(self._app_id, debug=False)
+        self._databus.connect(clean=True, tag_caches_snapshot=saved_snapshot)
         self._databus.sync_tags(self._patterns)
         self._databus.on_tags_update(self._patterns, self._on_tag_update)
         self._databus.commit()
@@ -89,7 +100,9 @@ class TagView:
         # Wait for initial data sync
         time.sleep(initial_wait_s)
 
-        # Load initial tags from cache (includes BAD_DELETED/BAD_UNSYNCED)
+        # Load initial tags from databus cache
+        # - Snapshot tags: already marked UNK by databus
+        # - FQ response tags: marked GOOD by databus
         initial_tags = self._databus.get_tags()
         with self._lock:
             for tag_id, tag_data in initial_tags.items():
@@ -98,21 +111,48 @@ class TagView:
                                                   quality=tag_data.q,
                                                   timestamp=tag_data.t,
                                                   updated=False)
+            self._snapshot = dict(initial_tags)
 
     def disconnect(self) -> None:
+        # Save current snapshot before disconnect
+        self._save_snapshot()
         if self._databus:
             self._databus.disconnect()
             self._databus = None
 
+    def _save_snapshot(self) -> None:  # 🤪
+        if not self._databus:
+            return
+        try:
+            self._STATE_DIR.mkdir(parents=True, exist_ok=True)
+            snapshot = self._databus.get_tags()
+            data = {tag_id: [tc.v, tc.t, tc.q] for tag_id, tc in snapshot.items()}
+            with open(self._SNAPSHOT_FILE, "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _load_snapshot(self) -> Dict[TagId, TagCache]:  # 🤪
+        try:
+            if self._SNAPSHOT_FILE.exists():
+                with open(self._SNAPSHOT_FILE, "r") as f:
+                    data = json.load(f)
+                return {tag_id: TagCache(v=item[0], t=item[1], q=item[2])
+                        for tag_id, item in data.items()}
+        except Exception:
+            pass
+        return {}
+
     def set_patterns(self, patterns: List[TagPattern]) -> None:
+        old_patterns = self._patterns
         self._patterns = patterns
         if self._databus:
-            self._databus.off_tags_update(self._patterns, self._on_tag_update)
+            self._databus.off_tags_update(old_patterns, self._on_tag_update)
             self._databus.sync_tags(patterns)
             self._databus.on_tags_update(patterns, self._on_tag_update)
             self._databus.commit()
 
-            # Reload tags from cache (includes BAD_DELETED/BAD_UNSYNCED)
+            # Reload tags from cache (use databus quality as-is)
             with self._lock:
                 self._tags.clear()
                 initial_tags = self._databus.get_tags()
@@ -122,6 +162,7 @@ class TagView:
                                                       quality=tag_data.q,
                                                       timestamp=tag_data.t,
                                                       updated=False)
+                self._snapshot = dict(initial_tags)
 
     def set_on_update(self, callback: Callable[[TagId, TagSnapshot], None]) -> None:
         self._on_update = callback
@@ -142,6 +183,12 @@ class TagView:
         with self._lock:
             for snapshot in self._tags.values():
                 snapshot.updated = False
+
+    def maybe_save_snapshot(self) -> None:  # 🤪
+        now = time.time()
+        if now - self._last_snapshot_ts >= self._snapshot_interval_s:
+            self._save_snapshot()
+            self._last_snapshot_ts = now
 
     def to_json(self) -> str:
         with self._lock:
@@ -224,6 +271,7 @@ class CliView:
             while True:
                 print("\033[2J\033[H", end="")
                 print(self._tag_view.to_json())
+                self._tag_view.maybe_save_snapshot()
                 time.sleep(self._config.refresh_interval_s)
         except KeyboardInterrupt:
             pass
@@ -252,6 +300,7 @@ class CliView:
                 self._handle_input(stdscr)
                 self._draw(stdscr)
                 self._tag_view.clear_updated_flags()
+                self._tag_view.maybe_save_snapshot()
         except KeyboardInterrupt:
             pass
         finally:
@@ -490,13 +539,13 @@ class CliView:
             self._show_result_lines(["No tags found."])
             return
 
-        lines = [f"{'TAG ID':<50} {'VALUE':<30} {'Q':>5} {'TIMESTAMP':<23}", ""]
+        lines = [f"{'TAG ID':<50} {'VALUE':<30} {'TIMESTAMP':<23} {'QUALITY'}", ""]
         for tag_id in sorted(tags.keys()):
             tag_data = tags[tag_id]
             if tag_data is not None:
                 val_str = self._format_value(tag_data.v)
                 ts_str = self._format_timestamp(tag_data.t)
-                lines.append(f"{tag_id:<50} {val_str:<30} {tag_data.q:>5} {ts_str}")
+                lines.append(f"{tag_id:<50} {val_str:<30} {ts_str:<23} {tag_data.q}")
             else:
                 lines.append(f"{tag_id:<50} {'(no data)':<30}")
         self._show_result_lines(lines)
@@ -527,7 +576,7 @@ class CliView:
             # Tag owned by another app - need disconnect/reconnect
             self._tag_view.disconnect()
             try:
-                owner_db = Databus(owner, debug=False)
+                owner_db = TagBus(owner, debug=False)
                 owner_db.connect()
                 owner_db.del_tags([tag_id])
                 owner_db.commit()
@@ -547,7 +596,7 @@ class CliView:
 
         self._tag_view.disconnect()
         try:
-            db = Databus(app_id, debug=False)
+            db = TagBus(app_id, debug=False)
             db.connect()
             db.del_tags()
             db.commit()
@@ -602,7 +651,7 @@ class CliView:
             self._show_result_lines(["Not connected."])
             return
         status = self._tag_view._databus.report_all_statistics()
-        lines = ["Databus Status:", ""]
+        lines = ["TagBus Status:", ""]
         for section_name in sorted(dir(status)):
             if section_name.startswith('_'):
                 continue
@@ -659,7 +708,7 @@ class CliView:
             time.sleep(1.0)
 
         # Execute clear domain
-        db = Databus("view_cmd", debug=False)
+        db = TagBus("view_cmd", debug=False)
         try:
             result = db.clear_domain()
             lines = ["Domain cleared:"]
@@ -776,6 +825,36 @@ class CliView:
 
         stdscr.refresh()
 
+    def _parse_filters(self, filter_text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Parse filter text into (tag_filter, value_filter, quality_filter)."""
+        tag_f, val_f, qual_f = None, None, None
+        if not filter_text:
+            return (tag_f, val_f, qual_f)
+
+        parts = filter_text.split()
+        for part in parts:
+            lower = part.lower()
+            if lower.startswith("t:"):
+                tag_f = part[2:]
+            elif lower.startswith("v:"):
+                val_f = part[2:]
+            elif lower.startswith("q:"):
+                qual_f = part[2:]
+            else:
+                tag_f = part
+        return (tag_f, val_f, qual_f)
+
+    def _match_filter(self, snapshot: TagSnapshot,
+                      tag_f: Optional[str], val_f: Optional[str], qual_f: Optional[str]) -> bool:
+        """Check if snapshot matches all filters."""
+        if tag_f and tag_f.lower() not in snapshot.tag_id.lower():
+            return False
+        if val_f and val_f.lower() not in str(snapshot.value).lower():
+            return False
+        if qual_f and qual_f.lower() not in snapshot.quality.lower():
+            return False
+        return True
+
     def _draw_tags(self, stdscr, height: int, width: int) -> None:
         snapshots = self._tag_view.get_snapshots()
 
@@ -786,8 +865,10 @@ class CliView:
             stdscr.clear()
 
         if self._filter_text:
+            tag_f, val_f, qual_f = self._parse_filters(self._filter_text)
             display_tag_ids = [t for t in self._sorted_tag_ids
-                               if self._filter_text.lower() in t.lower()]
+                               if t in snapshots and
+                               self._match_filter(snapshots[t], tag_f, val_f, qual_f)]
         else:
             display_tag_ids = self._sorted_tag_ids
 
@@ -796,8 +877,8 @@ class CliView:
         # Header
         header = f" TagView | Tags: {total_tags} "
         if self._filter_text:
-            header += f"| Filter: '{self._filter_text}' "
-        header += "| q:Quit /:Filter ::Cmd r:Resort"
+            header += f"| Filter: '{self._filter_text}' (t:tag v:val q:qual) "
+        header += "| q:Quit /:Filter c:Clear ::Cmd"
         stdscr.attron(curses.color_pair(5))
         try:
             stdscr.addstr(0, 0, header[:width-1].ljust(width-1))
@@ -807,10 +888,10 @@ class CliView:
 
         # Column header
         col_header = f"{'TAG ID':<50} {'VALUE':<30}"
-        if self._config.show_quality:
-            col_header += f" {'Q':>5}"
         if self._config.show_timestamp:
             col_header += f" {'TIMESTAMP':<23}"
+        if self._config.show_quality:
+            col_header += f" {'QUALITY'}"
         stdscr.attron(curses.A_BOLD)
         try:
             stdscr.addstr(1, 0, col_header[:width-1])
@@ -833,11 +914,11 @@ class CliView:
                 if snapshot:
                     value_str = self._format_value(snapshot.value)
                     line = f"{tag_id:<50} {value_str:<30}"
-                    if self._config.show_quality:
-                        line += f" {snapshot.quality:>5}"
                     if self._config.show_timestamp:
                         ts_str = self._format_timestamp(snapshot.timestamp)
                         line += f" {ts_str:<23}"
+                    if self._config.show_quality:
+                        line += f" {snapshot.quality}"
 
                     color = 0
                     if snapshot.updated:
@@ -846,7 +927,7 @@ class CliView:
                         color = curses.color_pair(1)
                     elif snapshot.quality == "stale":
                         color = curses.color_pair(2)
-                    elif snapshot.quality == "bad":
+                    elif snapshot.quality.startswith("bad"):
                         color = curses.color_pair(3)
 
                     try:
@@ -998,7 +1079,7 @@ class CliView:
 
     def _format_timestamp(self, ts: int) -> str:
         try:
-            # Databus timestamp is in milliseconds (ms)
+            # TagBus timestamp is in milliseconds (ms)
             dt = datetime.fromtimestamp(ts / 1_000)
             return dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         except Exception:

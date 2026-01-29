@@ -66,7 +66,7 @@ class MonitorApp(App):
             f"{self.app_id}/_meta/state": self.current_state.name if self.current_state else "None",
             f"{self.app_id}/_meta/exception_count": self.stats.exception_count
         })
-        self.databus.apply()
+        self.databus.commit()
 
     # ────────────────────────────────────────────────────────────
     # Internal Methods
@@ -99,7 +99,7 @@ class MonitorApp(App):
             static_tags[f"{self.app_id}/network/nic_all"] = ",".join(nic_result.value)
 
         self.databus.set_tags(static_tags)
-        self.databus.apply()
+        self.databus.commit()
         self.logger.info("static info published")
 
     def _publish_dynamic_info(self) -> None:
@@ -185,7 +185,7 @@ class MonitorApp(App):
             dynamic_tags[f"{self.app_id}/internet/measured_ts"] = internet["measured_ts"]
 
         self.databus.set_tags(dynamic_tags)
-        self.databus.apply()
+        self.databus.commit()
 
 
 if __name__ == "__main__":
