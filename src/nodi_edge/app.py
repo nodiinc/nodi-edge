@@ -12,7 +12,7 @@ from traceback import format_exc
 from contextlib import contextmanager
 from typing import Deque, Generator, Optional
 
-from tagbus import TagBus
+from tagbus import TagBus, TagBusConfig
 from nodi_libs.fsm import FiniteStateMachine
 from nodi_libs.logger import Logger, LoggerConfig, LoggingLevel
 from nodi_libs.timer import PeriodicTimer
@@ -252,7 +252,7 @@ class App:
                 with self._measure_time(self._app_statistics.prepare):
                     self._databus = TagBus(self._app_id, self._domain_id,
                                             debug=self._cli_args.debug,
-                                            heartbeat_interval_s=1.0)
+                                            config=TagBusConfig(heartbeat_interval_s=1.0))
                     self.on_prepare()
 
                     # One-time log
