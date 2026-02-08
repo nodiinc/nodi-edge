@@ -7,9 +7,20 @@ from __future__ import annotations
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 DATA_DIR = "/home/nodi/nodi-edge-data"
+CONFIG_DIR = f"{DATA_DIR}/config"
+DB_DIR = f"{DATA_DIR}/db"
+DB_PATH = f"{DB_DIR}/edge.db"
 LOG_DIR = f"{DATA_DIR}/log"
+LICENSE_DIR = f"{DATA_DIR}/license/tokens"
 BACKUP_DIR = f"{DATA_DIR}/backup"
 OTA_BACKUP_DIR = f"{BACKUP_DIR}/ota"
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Security
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CLOUD_PUBKEY_FILE = "/etc/nodi/cloud_pubkey.pem"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

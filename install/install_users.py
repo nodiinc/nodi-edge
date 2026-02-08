@@ -218,6 +218,8 @@ dirs = [
     DATA_DIR / "config" / "apps",
     DATA_DIR / "config" / "interfaces",
     DATA_DIR / "data" / "snapshots",
+    DATA_DIR / "db",
+    DATA_DIR / "license" / "tokens",
     DATA_DIR / "log",
 ]
 
@@ -252,6 +254,7 @@ nodi ALL=(root) NOPASSWD: /usr/bin/systemctl restart ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl status ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl enable ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl disable ne-*
+nodi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active ne-*
 nodi ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 nodi ALL=(root) NOPASSWD: /usr/bin/journalctl -u ne-*
 """

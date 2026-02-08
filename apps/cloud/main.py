@@ -410,6 +410,12 @@ class CloudApp(App):
         self.register_handler("ota_rollback", self._handle_ota_rollback)
         self.register_handler("ota_status", self._handle_ota_status)
 
+        # Supervisor integration
+        self.register_handler("addon_activate", self._handle_addon_activate)
+        self.register_handler("addon_deactivate", self._handle_addon_deactivate)
+        self.register_handler("service_list", self._handle_service_list)
+        self.register_handler("service_status", self._handle_service_status)
+
     def _handle_ping(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"pong": True, "timestamp": int(time.time() * 1000)}
 
@@ -487,6 +493,61 @@ class CloudApp(App):
             raise RuntimeError("OTA not enabled")
 
         return self._ota_manager.get_status()
+
+    # ────────────────────────────────────────────────────────────
+    # Supervisor Integration Handlers
+    # ────────────────────────────────────────────────────────────
+
+    def _send_supervisor_cmd(self, command: str, payload: Dict[str, Any]) -> None:
+        if not self.databus:
+            return
+        self.databus.set_tags({
+            f"supervisor/_cmd/{command}": json.dumps(payload)})
+        self.databus.commit()
+
+    def _read_supervisor_services(self) -> Dict[str, Any]:
+        if not self.databus:
+            return {}
+        tags = self.databus.get_tags(["supervisor/_meta/services"])
+        tag_data = tags.get("supervisor/_meta/services")
+        if tag_data and isinstance(tag_data.v, str):
+            try:
+                return json.loads(tag_data.v)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {}
+
+    def _handle_addon_activate(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        app_id = params.get("app_id", "")
+        token = params.get("token", "")
+        if not app_id or not token:
+            raise ValueError("app_id and token are required")
+
+        self._send_supervisor_cmd("activate", {"app_id": app_id, "token": token})
+        return {"submitted": True, "app_id": app_id}
+
+    def _handle_addon_deactivate(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        app_id = params.get("app_id", "")
+        if not app_id:
+            raise ValueError("app_id is required")
+
+        self._send_supervisor_cmd("deactivate", {"app_id": app_id})
+        return {"submitted": True, "app_id": app_id}
+
+    def _handle_service_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        services = self._read_supervisor_services()
+        return {"services": services, "count": len(services)}
+
+    def _handle_service_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        app_id = params.get("app_id", "")
+        if not app_id:
+            raise ValueError("app_id is required")
+
+        services = self._read_supervisor_services()
+        svc = services.get(app_id)
+        if not svc:
+            return {"app_id": app_id, "found": False}
+        return {"app_id": app_id, "found": True, **svc}
 
     def _on_ota_status_change(self, status: OtaStatus) -> None:
         self.logger.info(f"OTA status: {status.value}")

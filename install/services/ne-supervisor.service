@@ -1,12 +1,12 @@
 [Unit]
-Description=Nodi Edge Launcher
+Description=Nodi Edge Supervisor
 After=network.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=/root/venv/bin/python3 /root/nodi-edge/apps/launcher/main.py
+ExecStart=/root/venv/bin/python3 /root/nodi-edge/apps/supervisor/main.py
 Restart=always
 RestartSec=5
 
