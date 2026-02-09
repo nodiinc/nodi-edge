@@ -92,9 +92,9 @@ class TagView:
         saved_snapshot = self._load_snapshot()
 
         self._databus = TagBus(self._app_id, debug=False)
-        self._databus.connect(clean=True, tag_caches_snapshot=saved_snapshot)
+        self._databus.connect(clean=True, snapshot=saved_snapshot)
         self._databus.sync_tags(self._patterns)
-        self._databus.on_tags_update(self._patterns, self._on_tag_update)
+        self._databus.set_on_tags_change(self._patterns, self._on_tag_update)
         self._databus.commit()
 
         # Wait for initial data sync
@@ -147,9 +147,9 @@ class TagView:
         old_patterns = self._patterns
         self._patterns = patterns
         if self._databus:
-            self._databus.off_tags_update(old_patterns, self._on_tag_update)
+            self._databus.del_on_tags_change(old_patterns, self._on_tag_update)
             self._databus.sync_tags(patterns)
-            self._databus.on_tags_update(patterns, self._on_tag_update)
+            self._databus.set_on_tags_change(patterns, self._on_tag_update)
             self._databus.commit()
 
             # Reload tags from cache (use databus quality as-is)
