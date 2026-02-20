@@ -22,7 +22,7 @@ dev = [
 path = "src/nodi_edge/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/nodi_edge", "src/nodi_edge_intf"]
+packages = ["src/nodi_edge", "src/nodi_edge_apps", "src/nodi_edge_interface"]
 
 [tool.ruff]
 line-length = 100

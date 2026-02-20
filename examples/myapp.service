@@ -15,8 +15,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/nodi-edge/apps/myapp
-ExecStart=/root/venv/bin/python3 main.py
+ExecStart=/root/.venv/bin/python3 -m nodi_edge_apps.myapp
 
 # Restart policy
 Restart=always

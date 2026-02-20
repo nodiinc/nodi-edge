@@ -8,12 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "supervisor"))
 
-from main import _INTF_SERVICE_TEMPLATE, _VENV_PYTHON
+from nodi_edge_apps.supervisor.core import _INTERFACE_SERVICE_TEMPLATE, _VENV_PYTHON
 
 from nodi_edge.db import EdgeDB, PROTOCOL_MODULES
-from nodi_edge.intf_app import InterfaceApp
+from nodi_edge.interface_app import InterfaceApp
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -61,10 +60,10 @@ def test_full_flow_db_to_service_file(mem_db):
     # Map protocol to module
     protocol = row["protocol"]
     module = PROTOCOL_MODULES[protocol]
-    assert module == "nodi_edge_intf.modbus_tcp_client"
+    assert module == "nodi_edge_interface.modbus_tcp_client"
 
     # Format service template
-    content = _INTF_SERVICE_TEMPLATE.format(
+    content = _INTERFACE_SERVICE_TEMPLATE.format(
         app_id="mtc-01",
         python=_VENV_PYTHON,
         module=module,
@@ -222,7 +221,7 @@ def test_app_registry_roundtrip(mem_db):
     db.upsert_app(
         app_id="mtc-01",
         category="interface",
-        module="nodi_edge_intf.modbus_tcp_client",
+        module="nodi_edge_interface.modbus_tcp_client",
         enabled=True,
         conn_id="mtc-01",
         config={"poll_rate": 0.1})
@@ -232,7 +231,7 @@ def test_app_registry_roundtrip(mem_db):
     assert row is not None
     assert row["app_id"] == "mtc-01"
     assert row["category"] == "interface"
-    assert row["module"] == "nodi_edge_intf.modbus_tcp_client"
+    assert row["module"] == "nodi_edge_interface.modbus_tcp_client"
     assert row["enabled"] == 1
     assert row["conn_id"] == "mtc-01"
 

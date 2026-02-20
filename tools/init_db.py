@@ -39,15 +39,15 @@ CREATE TABLE IF NOT EXISTS prot_prop (
 );
 
 -- Interface
-CREATE TABLE IF NOT EXISTS intf (
-    intf VARCHAR PRIMARY KEY,
-    cmt  VARCHAR,
-    prot CHAR(3) REFERENCES prot(prot),
-    host VARCHAR,
-    port INTEGER,
-    prop TEXT DEFAULT '{}',
-    tout REAL DEFAULT 5.0,
-    rtr  REAL DEFAULT 10.0,
+CREATE TABLE IF NOT EXISTS interface (
+    interface VARCHAR PRIMARY KEY,
+    cmt       VARCHAR,
+    prot      CHAR(3) REFERENCES prot(prot),
+    host      VARCHAR,
+    port      INTEGER,
+    prop      TEXT DEFAULT '{}',
+    tout      REAL DEFAULT 5.0,
+    rtr       REAL DEFAULT 10.0,
     updated_at INTEGER DEFAULT (strftime('%s', 'now'))
 );
 
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS blck (
     blck VARCHAR PRIMARY KEY,
     cmt  VARCHAR,
     use  CHAR(1) DEFAULT 'Y',
-    intf VARCHAR REFERENCES intf(intf),
+    interface VARCHAR REFERENCES interface(interface),
     prop TEXT DEFAULT '{}',
     rw   CHAR(2) DEFAULT 'ro',
     trig CHAR(3) DEFAULT 'cyc',
@@ -102,14 +102,14 @@ CREATE TABLE IF NOT EXISTS app_registry (
     module            VARCHAR NOT NULL,
     enabled           INTEGER DEFAULT 0,
     config            TEXT DEFAULT '{}',
-    intf_id           VARCHAR,
+    interface_id      VARCHAR,
     license_token     TEXT,
     license_expires_at INTEGER,
     updated_at        INTEGER DEFAULT (strftime('%s', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_registry_category ON app_registry(category);
-CREATE INDEX IF NOT EXISTS idx_app_registry_intf_id ON app_registry(intf_id);
+CREATE INDEX IF NOT EXISTS idx_app_registry_interface_id ON app_registry(interface_id);
 """
 
 
@@ -150,26 +150,26 @@ _SEED_PROT_PROP = [
     ("mts", "blck", 2, "memory_area", "Memory Area", "str", "Y", "Memory area"),
     ("mts", "map", 1, "address", "Address", "int", "Y", "Register address"),
     # OPC UA Client (ouc)
-    ("ouc", "intf", 1, "path", "Path", "str", "Y", "URL path"),
-    ("ouc", "intf", 2, "auth_type", "Auth Type", "str", "Y", "anonymous,certificate"),
-    ("ouc", "intf", 3, "certificate", "Certificate", "str", "N", "Certificate file path"),
-    ("ouc", "intf", 4, "private_key", "Private Key", "str", "N", "Private key file path"),
+    ("ouc", "interface", 1, "path", "Path", "str", "Y", "URL path"),
+    ("ouc", "interface", 2, "auth_type", "Auth Type", "str", "Y", "anonymous,certificate"),
+    ("ouc", "interface", 3, "certificate", "Certificate", "str", "N", "Certificate file path"),
+    ("ouc", "interface", 4, "private_key", "Private Key", "str", "N", "Private key file path"),
     ("ouc", "blck", 1, "server_uri", "Namespace", "str", "Y", "Server URI"),
     ("ouc", "map", 1, "node_id", "Node ID", "str", "Y", "OPC UA Node ID"),
     # OPC UA Server (ous)
-    ("ous", "intf", 1, "path", "Path", "str", "Y", "URL path"),
-    ("ous", "intf", 2, "server_name", "Server Name", "str", "Y", "Server name (URI)"),
-    ("ous", "intf", 3, "auth_type", "Auth Type", "str", "N", "anonymous,certificate"),
-    ("ous", "intf", 4, "certificate", "Certificate", "str", "N", "Certificate file path"),
-    ("ous", "intf", 5, "private_key", "Private Key", "str", "N", "Private key file path"),
+    ("ous", "interface", 1, "path", "Path", "str", "Y", "URL path"),
+    ("ous", "interface", 2, "server_name", "Server Name", "str", "Y", "Server name (URI)"),
+    ("ous", "interface", 3, "auth_type", "Auth Type", "str", "N", "anonymous,certificate"),
+    ("ous", "interface", 4, "certificate", "Certificate", "str", "N", "Certificate file path"),
+    ("ous", "interface", 5, "private_key", "Private Key", "str", "N", "Private key file path"),
     ("ous", "blck", 1, "server_uri", "Namespace", "str", "Y", "Server URI"),
     ("ous", "map", 1, "identifier", "Identifier", "str", "Y", "Identifier"),
     ("ous", "map", 2, "path", "Path", "str", "N", "Node path"),
     ("ous", "map", 3, "writable", "Writable", "bool", "N", "true/false"),
     # MQTT Client (mqc)
-    ("mqc", "intf", 1, "client_id", "Client ID", "str", "N", "MQTT client ID"),
-    ("mqc", "intf", 2, "username", "Username", "str", "N", "MQTT username"),
-    ("mqc", "intf", 3, "password", "Password", "str", "N", "MQTT password"),
+    ("mqc", "interface", 1, "client_id", "Client ID", "str", "N", "MQTT client ID"),
+    ("mqc", "interface", 2, "username", "Username", "str", "N", "MQTT username"),
+    ("mqc", "interface", 3, "password", "Password", "str", "N", "MQTT password"),
     ("mqc", "blck", 1, "qos", "QoS", "int", "N", "0, 1, 2"),
     ("mqc", "blck", 2, "retain", "Retain", "bool", "N", "true/false"),
     ("mqc", "map", 1, "topic", "Topic", "str", "Y", "MQTT topic"),
@@ -177,19 +177,19 @@ _SEED_PROT_PROP = [
     ("kfc", "blck", 1, "group_id", "Group ID", "str", "N", "Consumer group ID"),
     ("kfc", "map", 1, "topic", "Topic", "str", "Y", "Kafka topic"),
     # Relation DB Client (rdc)
-    ("rdc", "intf", 1, "driver", "Driver", "str", "Y", "postgresql,sqlite3,..."),
-    ("rdc", "intf", 2, "database", "Database", "str", "Y", "DB path or name"),
-    ("rdc", "intf", 3, "username", "Username", "str", "N", "DB username"),
-    ("rdc", "intf", 4, "password", "Password", "str", "N", "DB password"),
+    ("rdc", "interface", 1, "driver", "Driver", "str", "Y", "postgresql,sqlite3,..."),
+    ("rdc", "interface", 2, "database", "Database", "str", "Y", "DB path or name"),
+    ("rdc", "interface", 3, "username", "Username", "str", "N", "DB username"),
+    ("rdc", "interface", 4, "password", "Password", "str", "N", "DB password"),
     ("rdc", "blck", 1, "query", "Query", "str", "Y", "SQL query"),
     # REST API Client (rac)
-    ("rac", "intf", 1, "base_url", "Base URL", "str", "Y", "Base URL"),
-    ("rac", "intf", 2, "auth_type", "Auth Type", "str", "N", "none,basic,bearer,api_key"),
-    ("rac", "intf", 3, "auth_value", "Auth Value", "str", "N", "Token or API key"),
+    ("rac", "interface", 1, "base_url", "Base URL", "str", "Y", "Base URL"),
+    ("rac", "interface", 2, "auth_type", "Auth Type", "str", "N", "none,basic,bearer,api_key"),
+    ("rac", "interface", 3, "auth_value", "Auth Value", "str", "N", "Token or API key"),
     ("rac", "blck", 1, "method", "Method", "str", "Y", "GET,POST,PUT,DELETE"),
     ("rac", "blck", 2, "endpoint", "Endpoint", "str", "Y", "API endpoint path"),
     # REST API Server (ras)
-    ("ras", "intf", 1, "base_path", "Base Path", "str", "N", "API base path"),
+    ("ras", "interface", 1, "base_path", "Base Path", "str", "N", "API base path"),
     ("ras", "blck", 1, "endpoint", "Endpoint", "str", "Y", "API endpoint path"),
     ("ras", "blck", 2, "method", "Method", "str", "Y", "GET,POST,PUT,DELETE"),
 ]

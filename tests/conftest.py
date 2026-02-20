@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS app_registry (
     module TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 0,
     config TEXT DEFAULT '{}',
-    intf_id TEXT,
+    interface_id TEXT,
     conn_id TEXT,
     license_token TEXT,
     license_expires_at INTEGER,

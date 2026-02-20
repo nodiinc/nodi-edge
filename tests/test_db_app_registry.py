@@ -19,9 +19,9 @@ def test_upsert_app_with_conn_id(mem_db):
     db.upsert_app(
         app_id="mtc-01",
         category="interface",
-        module="nodi_edge_intf.modbus_tcp_client",
+        module="nodi_edge_interface.modbus_tcp_client",
         enabled=True,
-        intf_id="intf-01",
+        interface_id="interface-01",
         conn_id="mtc-01")
 
     row = db.select_app("mtc-01")
@@ -29,7 +29,7 @@ def test_upsert_app_with_conn_id(mem_db):
     assert row["app_id"] == "mtc-01"
     assert row["category"] == "interface"
     assert row["conn_id"] == "mtc-01"
-    assert row["intf_id"] == "intf-01"
+    assert row["interface_id"] == "interface-01"
     assert row["enabled"] == 1
 
 
@@ -55,14 +55,14 @@ def test_upsert_app_update_conn_id(mem_db):
     db.upsert_app(
         app_id="mtc-01",
         category="interface",
-        module="nodi_edge_intf.modbus_tcp_client",
+        module="nodi_edge_interface.modbus_tcp_client",
         conn_id="conn-old")
 
     # Update with new conn_id
     db.upsert_app(
         app_id="mtc-01",
         category="interface",
-        module="nodi_edge_intf.modbus_tcp_client",
+        module="nodi_edge_interface.modbus_tcp_client",
         conn_id="conn-new")
 
     row = db.select_app("mtc-01")

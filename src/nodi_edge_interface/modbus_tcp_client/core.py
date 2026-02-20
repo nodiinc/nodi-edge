@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from nodi_edge.app import AppConfig
-from nodi_edge.intf_app import InterfaceApp
+from nodi_edge.interface_app import InterfaceApp
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -25,15 +25,15 @@ class ModbusTcpClientApp(InterfaceApp):
         self._agent = None
         self._modbus_groups: List[Dict[str, Any]] = []
 
-    def on_intf_prepare(self) -> None:
+    def on_interface_prepare(self) -> None:
         # Parse block properties into Modbus unit/fc groups
         self._parse_modbus_groups()
 
-    def on_intf_configure(self) -> None:
+    def on_interface_configure(self) -> None:
         # Re-parse groups after config reload
         self._parse_modbus_groups()
 
-    def on_intf_connect(self) -> None:
+    def on_interface_connect(self) -> None:
         # Create Modbus TCP connection
         host = self._conn_config.get("host", "127.0.0.1")
         port = self._conn_config.get("port", 502)
@@ -43,11 +43,11 @@ class ModbusTcpClientApp(InterfaceApp):
         # self._agent = ModbusTcpClient(host, port, timeout=timeout)
         # self._agent.connect()
 
-    def on_intf_execute(self) -> None:
+    def on_interface_execute(self) -> None:
         # TODO: Read/write Modbus registers per block schedule
         pass
 
-    def on_intf_disconnect(self) -> None:
+    def on_interface_disconnect(self) -> None:
         if self._agent:
             # self._agent.close()
             self._agent = None

@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=root
 Group=root
-ExecStart=/root/venv/bin/python3 /root/nodi-edge/apps/supervisor/main.py
+ExecStart=/root/.venv/bin/python3 -m nodi_edge_apps.supervisor
 Restart=always
 RestartSec=5
 

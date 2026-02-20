@@ -137,30 +137,31 @@ def _read_csv_with_legends(file_path: str) -> Tuple[List[str], List[Dict[str, st
     return legend_lines, rows
 
 
-def load_intf_csv(db: EdgeDB, file_path: str) -> int:
+def load_interface_csv(db: EdgeDB, file_path: str) -> int:
     legend_lines, rows = _read_csv_with_legends(file_path)
     legends = parse_legend_rows(legend_lines)
     now = int(time.time())
     count = 0
 
     for row in rows:
-        intf_id = row.get("intf", "").strip()
+        interface_id = row.get("interface", "").strip()
         prot = row.get("prot", "").strip()
-        if not intf_id or not prot:
+        if not interface_id or not prot:
             continue
 
         # Get mapping: legend first, then prot_prop fallback
         mapping = legends.get(prot, {})
-        type_mapping = db.select_prot_prop_mapping(prot, "intf")
+        type_mapping = db.select_prot_prop_mapping(prot, "interface")
         if not mapping:
             mapping = {pos: (key, key) for pos, (key, typ) in type_mapping.items()}
 
         prop_json = propn_to_json(row, mapping, type_mapping)
 
         db.conn.execute(
-            "INSERT OR REPLACE INTO intf (intf, cmt, prot, host, port, prop, tout, rtr, updated_at) "
+            "INSERT OR REPLACE INTO interface "
+            "(interface, cmt, prot, host, port, prop, tout, rtr, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (intf_id,
+            (interface_id,
              row.get("cmt", ""),
              prot,
              row.get("host", ""),
@@ -183,13 +184,13 @@ def load_blck_csv(db: EdgeDB, file_path: str) -> int:
 
     for row in rows:
         blck_id = row.get("blck", "").strip()
-        intf_id = row.get("intf", "").strip()
+        interface_id = row.get("interface", "").strip()
         if not blck_id:
             continue
 
-        # Get protocol from intf table
-        intf_row = db.select_interface(intf_id)
-        prot = intf_row["prot"] if intf_row else ""
+        # Get protocol from interface table
+        interface_row = db.select_interface(interface_id)
+        prot = interface_row["prot"] if interface_row else ""
 
         mapping = legends.get(prot, {})
         type_mapping = db.select_prot_prop_mapping(prot, "blck") if prot else {}
@@ -200,12 +201,12 @@ def load_blck_csv(db: EdgeDB, file_path: str) -> int:
 
         db.conn.execute(
             "INSERT OR REPLACE INTO blck "
-            "(blck, cmt, use, intf, prop, rw, trig, tm, stby, updated_at) "
+            "(blck, cmt, use, interface, prop, rw, trig, tm, stby, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (blck_id,
              row.get("cmt", ""),
              row.get("use", "Y"),
-             intf_id,
+             interface_id,
              prop_json,
              row.get("rw", "ro"),
              row.get("trig", "cyc"),
@@ -235,7 +236,8 @@ def load_blck_map_csv(db: EdgeDB, file_path: str) -> int:
         # Lookup protocol for this block
         if blck_id not in blck_prot_cache:
             blck_row = db.conn.execute(
-                "SELECT i.prot FROM blck b JOIN intf i ON b.intf = i.intf "
+                "SELECT i.prot FROM blck b "
+                "JOIN interface i ON b.interface = i.interface "
                 "WHERE b.blck = ?", (blck_id,)).fetchone()
             blck_prot_cache[blck_id] = blck_row[0] if blck_row else ""
 
@@ -320,7 +322,7 @@ def export_blck_map_csv(db: EdgeDB, file_path: str) -> int:
         "SELECT bm.blck, bm.tag, bm.idx, bm.prop, i.prot "
         "FROM blck_map bm "
         "JOIN blck b ON bm.blck = b.blck "
-        "JOIN intf i ON b.intf = i.intf "
+        "JOIN interface i ON b.interface = i.interface "
         "ORDER BY bm.blck, bm.tag").fetchall()
 
     if not rows:
@@ -388,7 +390,7 @@ def load_all(config_dir: str = CONFIG_DIR, db_path: str = DB_PATH) -> Dict[str, 
     # Load in dependency order
     loaders = [
         ("tag", load_tag_csv, "tag.csv"),
-        ("intf", load_intf_csv, "intf.csv"),
+        ("interface", load_interface_csv, "interface.csv"),
         ("blck", load_blck_csv, "blck.csv"),
         ("blck_map", load_blck_map_csv, "blck_map.csv"),
         ("arcv", load_arcv_csv, "arcv.csv"),

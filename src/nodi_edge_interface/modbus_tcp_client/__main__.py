@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from nodi_edge_intf.modbus_tcp_client.core import ModbusTcpClientApp
+from nodi_edge_interface.modbus_tcp_client.core import ModbusTcpClientApp
 
 _APP_ID = "mtc"
 

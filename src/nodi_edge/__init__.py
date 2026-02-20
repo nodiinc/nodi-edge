@@ -15,7 +15,7 @@ from nodi_edge.app import (
     MovingAverage,
     StageStatistics,
 )
-from nodi_edge.intf_app import InterfaceApp
+from nodi_edge.interface_app import InterfaceApp
 
 __all__ = [
     "App",

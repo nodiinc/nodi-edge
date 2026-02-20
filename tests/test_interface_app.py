@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nodi_edge.intf_app import InterfaceApp
+from nodi_edge.interface_app import InterfaceApp
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Helpers
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _create_intf_app(conn_id: str = "mtc-01",
+def _create_interface_app(conn_id: str = "mtc-01",
                      protocol: str = "mtc",
                      app_id: str = "mtc-01"):
     """Create an InterfaceApp with all external dependencies mocked."""
@@ -33,7 +33,7 @@ def _create_intf_app(conn_id: str = "mtc-01",
 
 class TestConnIdValidation:
 
-    def test_intf_app_requires_conn_id(self):
+    def test_interface_app_requires_conn_id(self):
         """Verify SystemExit when --conn-id is not provided."""
         with patch("sys.argv", ["test"]), \
              patch("nodi_edge.app.TagBus"), \
@@ -46,7 +46,7 @@ class TestConnIdValidation:
 
     def test_conn_id_property(self):
         """Verify conn_id returns the correct value."""
-        app = _create_intf_app(conn_id="my-conn-42")
+        app = _create_interface_app(conn_id="my-conn-42")
         assert app.conn_id == "my-conn-42"
 
 
@@ -58,7 +58,7 @@ class TestConfigLoading:
 
     def test_load_config(self):
         """Verify _load_config populates _conn_config and _block_configs."""
-        app = _create_intf_app()
+        app = _create_interface_app()
 
         # Mock EdgeDB
         mock_db = MagicMock()
@@ -125,5 +125,5 @@ class TestConfigReloadTag:
 
     def test_config_reload_tag_format(self):
         """Verify tag matches /system/{conn_id}/config_reload."""
-        app = _create_intf_app(conn_id="my-conn-01")
+        app = _create_interface_app(conn_id="my-conn-01")
         assert app._config_reload_tag == "/system/my-conn-01/config_reload"

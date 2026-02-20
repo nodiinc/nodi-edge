@@ -323,7 +323,7 @@ class App:
 
                     # Skip TagBus connect if already running (reconfigure path)
                     if self._databus and not self._databus.is_running:
-                        self._databus.connect(clean=self._cli_args.clean)
+                        self._databus.connect()
                     self.on_connect()
 
                     # One-time log

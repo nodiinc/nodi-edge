@@ -130,7 +130,7 @@ class InterfaceApp(App):
         self._load_config()
 
         # Call protocol's prepare
-        self.on_intf_prepare()
+        self.on_interface_prepare()
 
     def on_configure(self) -> None:
         # Reload config from DB (for reconfigure path)
@@ -138,7 +138,7 @@ class InterfaceApp(App):
             self._load_config()
 
         # Call protocol's configure
-        self.on_intf_configure()
+        self.on_interface_configure()
 
     def on_connect(self) -> None:
         # Subscribe to config_reload system tag
@@ -149,16 +149,16 @@ class InterfaceApp(App):
             self.databus.commit()
 
         # Call protocol's connect
-        self.on_intf_connect()
+        self.on_interface_connect()
 
     def on_execute(self) -> None:
-        self.on_intf_execute()
+        self.on_interface_execute()
 
     def on_recover(self) -> None:
-        self.on_intf_recover()
+        self.on_interface_recover()
 
     def on_disconnect(self) -> None:
-        self.on_intf_disconnect()
+        self.on_interface_disconnect()
 
         # Close database
         if self._db:
@@ -170,20 +170,20 @@ class InterfaceApp(App):
     # Protocol Override Points
     # ────────────────────────────────────────────────────────────
 
-    def on_intf_prepare(self) -> None:
+    def on_interface_prepare(self) -> None:
         pass
 
-    def on_intf_configure(self) -> None:
+    def on_interface_configure(self) -> None:
         pass
 
-    def on_intf_connect(self) -> None:
+    def on_interface_connect(self) -> None:
         pass
 
-    def on_intf_execute(self) -> None:
+    def on_interface_execute(self) -> None:
         pass
 
-    def on_intf_recover(self) -> None:
+    def on_interface_recover(self) -> None:
         pass
 
-    def on_intf_disconnect(self) -> None:
+    def on_interface_disconnect(self) -> None:
         pass

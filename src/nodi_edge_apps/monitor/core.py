@@ -186,9 +186,3 @@ class MonitorApp(App):
 
         self.databus.set_tags(dynamic_tags)
         self.databus.commit()
-
-
-if __name__ == "__main__":
-    app_config = AppConfig(execute_interval_s=3.0, manage_interval_s=1.0)
-    app = MonitorApp("monitor", app_config=app_config)
-    app.start()

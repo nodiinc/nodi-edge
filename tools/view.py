@@ -92,7 +92,7 @@ class TagView:
         saved_snapshot = self._load_snapshot()
 
         self._databus = TagBus(self._app_id, debug=False)
-        self._databus.connect(clean=True, snapshot=saved_snapshot)
+        self._databus.connect(snapshot=saved_snapshot)
         self._databus.sync_tags(self._patterns)
         self._databus.set_on_tags_change(self._patterns, self._on_tag_update)
         self._databus.commit()

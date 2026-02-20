@@ -23,7 +23,7 @@ _SYSTEMD_DIR = Path("/etc/systemd/system")
 _VENV_PYTHON = "/root/.venv/bin/python3"
 
 # Service naming
-_SVC_PREFIX_INTF = "ne-intf"
+_SVC_PREFIX_INTERFACE = "ne-interface"
 _SVC_PREFIX_ADDON = "ne-addon"
 
 # TagBus command/event tags
@@ -40,7 +40,7 @@ _MAX_RESTART_COUNT = 5
 _RESTART_COUNT_RESET_S = 300
 
 # systemd unit templates
-_INTF_SERVICE_TEMPLATE = """\
+_INTERFACE_SERVICE_TEMPLATE = """\
 [Unit]
 Description=Nodi Edge Interface: {app_id}
 After=network.target ne-supervisor.service
@@ -220,7 +220,7 @@ class SupervisorApp(App):
 
     def _get_service_name(self, app_id: str, category: str) -> str:
         if category == "interface":
-            return f"{_SVC_PREFIX_INTF}-{app_id}"
+            return f"{_SVC_PREFIX_INTERFACE}-{app_id}"
         return f"{_SVC_PREFIX_ADDON}-{app_id}"
 
     def _get_service_path(self, app_id: str, category: str) -> Path:
@@ -260,7 +260,7 @@ class SupervisorApp(App):
         path = self._get_service_path(state.app_id, state.category)
 
         if state.category == "interface":
-            content = _INTF_SERVICE_TEMPLATE.format(
+            content = _INTERFACE_SERVICE_TEMPLATE.format(
                 app_id=state.app_id,
                 python=_VENV_PYTHON,
                 module=state.module,
@@ -666,12 +666,3 @@ class SupervisorApp(App):
             return
         self.databus.set_tags({f"{_TAG_EVENT_PREFIX}/{event}": data})
         self.databus.commit()
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Entry Point
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-if __name__ == "__main__":
-    app = SupervisorApp()
-    app.start()

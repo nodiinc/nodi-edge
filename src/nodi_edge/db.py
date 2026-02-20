@@ -14,27 +14,27 @@ from nodi_edge.config import DB_PATH
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 AppCategory = str   # "interface", "addon"
-IntfId = str
+InterfaceId = str
 ConnId = str
 AppId = str
 
 # Protocol code → module mapping
 PROTOCOL_MODULES: Dict[str, str] = {
-    "mtc": "nodi_edge_intf.modbus_tcp_client",
-    "mts": "nodi_edge_intf.modbus_tcp_server",
-    "mvc": "nodi_edge_intf.modbus_rtu_tcp_client",
-    "mvs": "nodi_edge_intf.modbus_rtu_tcp_server",
-    "mrc": "nodi_edge_intf.modbus_rtu_client",
-    "mrs": "nodi_edge_intf.modbus_rtu_server",
-    "ouc": "nodi_edge_intf.opcua_client",
-    "ous": "nodi_edge_intf.opcua_server",
-    "mqc": "nodi_edge_intf.mqtt_client",
-    "mqs": "nodi_edge_intf.mqtt_broker",
-    "kfc": "nodi_edge_intf.kafka_client",
-    "kfs": "nodi_edge_intf.kafka_server",
-    "rdc": "nodi_edge_intf.rdb_client",
-    "rac": "nodi_edge_intf.rest_client",
-    "ras": "nodi_edge_intf.rest_server",
+    "mtc": "nodi_edge_interface.modbus_tcp_client",
+    "mts": "nodi_edge_interface.modbus_tcp_server",
+    "mvc": "nodi_edge_interface.modbus_rtu_tcp_client",
+    "mvs": "nodi_edge_interface.modbus_rtu_tcp_server",
+    "mrc": "nodi_edge_interface.modbus_rtu_client",
+    "mrs": "nodi_edge_interface.modbus_rtu_server",
+    "ouc": "nodi_edge_interface.opcua_client",
+    "ous": "nodi_edge_interface.opcua_server",
+    "mqc": "nodi_edge_interface.mqtt_client",
+    "mqs": "nodi_edge_interface.mqtt_broker",
+    "kfc": "nodi_edge_interface.kafka_client",
+    "kfs": "nodi_edge_interface.kafka_server",
+    "rdc": "nodi_edge_interface.rdb_client",
+    "rac": "nodi_edge_interface.rest_client",
+    "ras": "nodi_edge_interface.rest_server",
 }
 
 # Addon app modules
@@ -96,7 +96,7 @@ class EdgeDB:
                    module: str,
                    enabled: bool = False,
                    config: Optional[Dict[str, Any]] = None,
-                   intf_id: Optional[str] = None,
+                   interface_id: Optional[str] = None,
                    conn_id: Optional[str] = None,
                    license_token: Optional[str] = None,
                    license_expires_at: Optional[int] = None) -> None:
@@ -104,17 +104,17 @@ class EdgeDB:
         config_json = json.dumps(config) if config else "{}"
         self.conn.execute(
             "INSERT INTO app_registry "
-            "(app_id, category, module, enabled, config, intf_id, conn_id, "
+            "(app_id, category, module, enabled, config, interface_id, conn_id, "
             " license_token, license_expires_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(app_id) DO UPDATE SET "
             "  category=excluded.category, module=excluded.module, "
             "  enabled=excluded.enabled, config=excluded.config, "
-            "  intf_id=excluded.intf_id, conn_id=excluded.conn_id, "
+            "  interface_id=excluded.interface_id, conn_id=excluded.conn_id, "
             "  license_token=excluded.license_token, "
             "  license_expires_at=excluded.license_expires_at, "
             "  updated_at=excluded.updated_at",
-            (app_id, category, module, int(enabled), config_json, intf_id,
+            (app_id, category, module, int(enabled), config_json, interface_id,
              conn_id, license_token, license_expires_at, now))
         self.conn.commit()
 
@@ -150,24 +150,26 @@ class EdgeDB:
 
     def select_interfaces(self) -> List[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM intf ORDER BY intf").fetchall()
+            "SELECT * FROM interface ORDER BY interface").fetchall()
 
-    def select_interface(self, intf_id: str) -> Optional[sqlite3.Row]:
+    def select_interface(self, interface_id: str) -> Optional[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM intf WHERE intf = ?", (intf_id,)).fetchone()
+            "SELECT * FROM interface WHERE interface = ?",
+            (interface_id,)).fetchone()
 
     def select_interfaces_updated_after(self, ts: int) -> List[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM intf WHERE updated_at > ? ORDER BY intf",
+            "SELECT * FROM interface WHERE updated_at > ? ORDER BY interface",
             (ts,)).fetchall()
 
-    def select_max_intf_updated_at(self) -> int:
+    def select_max_interface_updated_at(self) -> int:
         row = self.conn.execute(
-            "SELECT COALESCE(MAX(updated_at), 0) FROM intf").fetchone()
+            "SELECT COALESCE(MAX(updated_at), 0) FROM interface").fetchone()
         return row[0]
 
-    def select_intf_ids(self) -> List[str]:
-        rows = self.conn.execute("SELECT intf FROM intf ORDER BY intf").fetchall()
+    def select_interface_ids(self) -> List[str]:
+        rows = self.conn.execute(
+            "SELECT interface FROM interface ORDER BY interface").fetchall()
         return [r[0] for r in rows]
 
 

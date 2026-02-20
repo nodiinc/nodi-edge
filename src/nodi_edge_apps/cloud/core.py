@@ -16,7 +16,7 @@ from nodi_libs import MqttClient, MqttTransportType, OtaManager, OtaConfig, OtaS
 
 from nodi_edge import App, AppConfig
 from nodi_edge.config import OTA_BACKUP_DIR, get_serial_number
-from config import CLOUD_SERVER, TOPIC_FORMATS
+from .config import CLOUD_SERVER, TOPIC_FORMATS
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -25,7 +25,7 @@ from config import CLOUD_SERVER, TOPIC_FORMATS
 
 @dataclass
 class CloudConfig:
-    
+
     # MQTT connection
     host: str = CLOUD_SERVER.host
     port: int = CLOUD_SERVER.port
@@ -440,7 +440,7 @@ class CloudApp(App):
 
     def _handle_reboot(self, params: Dict[str, Any]) -> Dict[str, Any]:
         delay = params.get("delay", 5)
-        # Schedule reboot
+        # Schedule reboot (static command, not user-controlled)
         threading.Timer(delay, lambda: os.system("sudo reboot")).start()
         return {"scheduled": True, "delay": delay}
 
@@ -559,22 +559,3 @@ class CloudApp(App):
             self._mqtt_client.publish(topic=self._result_topic,
                                       payload=json.dumps(payload),
                                       qos=self._cloud_config.publish_qos)
-
-
-if __name__ == "__main__":
-    cloud_config = CloudConfig(report_interval_s=10.0)
-    app_config = AppConfig(execute_interval_s=1.0,
-                           retry_delay_s=5.0)
-    app = CloudApp(app_id="ne-cloud",
-                   serial_number=get_serial_number(),
-                   cloud_config=cloud_config,
-                   app_config=app_config)
-
-    # Report data getter
-    def get_report_data() -> Dict[str, Any]:
-        return {"cpu_percent": psutil.cpu_percent(),
-                "memory_percent": psutil.virtual_memory().percent}
-
-    app.set_report_data_getter(get_report_data)
-
-    app.start()
