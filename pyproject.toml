@@ -22,11 +22,15 @@ dev = [
 path = "src/nodi_edge/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/nodi_edge"]
+packages = ["src/nodi_edge", "src/nodi_edge_intf"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

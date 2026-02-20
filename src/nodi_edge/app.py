@@ -5,6 +5,7 @@ import argparse
 import os
 import signal
 import sys
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -157,12 +158,17 @@ class App:
         self._manage_timer = PeriodicTimer(self._app_conf.manage_interval_s)
         self._retry_timer = PeriodicTimer(self._app_conf.retry_delay_s)
 
+        # Reconfigure
+        self._reconfigure_event = threading.Event()
+
         # FSM
         self._fsm = FiniteStateMachine()
         self._setup_fsm()
 
     def _parse_cli_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--conn-id", type=str, default=None,
+                            help="connection identifier for config lookup")
         parser.add_argument("--clean", action="store_true",
                             help="clean databus state on connect")
         parser.add_argument("--debug", action="store_true",
@@ -201,6 +207,13 @@ class App:
     @property
     def is_running(self) -> bool:
         return self._fsm.is_running
+
+    # ────────────────────────────────────────────────────────────
+    # Reconfigure
+    # ────────────────────────────────────────────────────────────
+
+    def request_reconfigure(self) -> None:
+        self._reconfigure_event.set()
 
     # ────────────────────────────────────────────────────────────
     # Helpers
@@ -242,7 +255,7 @@ class App:
         self._fsm.limit_transitions({AppState.PREPARE: [AppState.CONFIGURE],
                                      AppState.CONFIGURE: [AppState.CONNECT],
                                      AppState.CONNECT: [AppState.EXECUTE, AppState.RECOVER],
-                                     AppState.EXECUTE: [AppState.RECOVER],
+                                     AppState.EXECUTE: [AppState.CONFIGURE, AppState.RECOVER],
                                      AppState.RECOVER: [AppState.EXECUTE, AppState.DISCONNECT],
                                      AppState.DISCONNECT: [AppState.CONNECT],})
 
@@ -276,10 +289,13 @@ class App:
         def configure_handler():
             try:
                 with self._measure_time(self._app_statistics.configure):
-                    if self._databus and self._databus.is_running:
-                        self._logger.critical(f"app already running: {self._app_id}")
-                        self._fsm.stop()
-                        sys.exit(1)
+
+                    # Only check on first configure (reconfigure is expected with running databus)
+                    if not self._app_statistics.configure.done:
+                        if self._databus and self._databus.is_running:
+                            self._logger.critical(f"app already running: {self._app_id}")
+                            self._fsm.stop()
+                            sys.exit(1)
 
                     self.on_configure()
 
@@ -304,7 +320,9 @@ class App:
 
             try:
                 with self._measure_time(self._app_statistics.connect):
-                    if self._databus:
+
+                    # Skip TagBus connect if already running (reconfigure path)
+                    if self._databus and not self._databus.is_running:
                         self._databus.connect(clean=self._cli_args.clean)
                     self.on_connect()
 
@@ -335,6 +353,13 @@ class App:
                             if self._log_conf.logging_flags.stages:
                                 self._logger.info("executing")
                             self._reset_done_flags_for_success()
+
+                        # Check for reconfigure request
+                        if self._reconfigure_event.is_set():
+                            self._reconfigure_event.clear()
+                            self._logger.info("reconfigure requested")
+                            self._fsm.transition(AppState.CONFIGURE)
+                            break
 
                         # Wait for next cycle
                         self._execute_timer.wait()

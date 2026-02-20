@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from nodi_edge.app import App, AppConfig
 from nodi_edge.config import DB_PATH, LICENSE_DIR, CLOUD_PUBKEY_FILE
@@ -20,7 +20,7 @@ from nodi_edge.db import EdgeDB, PROTOCOL_MODULES, ADDON_MODULES
 
 _APP_ID = "supervisor"
 _SYSTEMD_DIR = Path("/etc/systemd/system")
-_VENV_PYTHON = "/root/venv/bin/python3"
+_VENV_PYTHON = "/root/.venv/bin/python3"
 
 # Service naming
 _SVC_PREFIX_INTF = "ne-intf"
@@ -30,6 +30,10 @@ _SVC_PREFIX_ADDON = "ne-addon"
 _TAG_CMD_PREFIX = f"{_APP_ID}/_cmd"
 _TAG_EVENT_PREFIX = f"{_APP_ID}/_event"
 _TAG_META_PREFIX = f"{_APP_ID}/_meta"
+
+# System tags for conn lifecycle events
+_TAG_SYS_CONN_ADDED = "/system/supervisor/conn_added"
+_TAG_SYS_CONN_REMOVED = "/system/supervisor/conn_removed"
 
 # Healthcheck
 _MAX_RESTART_COUNT = 5
@@ -46,8 +50,8 @@ Requires=ne-supervisor.service
 Type=simple
 User=root
 Group=root
-ExecStart={python} -m {module} {intf_id}
-Restart=on-failure
+ExecStart={python} -m {module} --conn-id={conn_id}
+Restart=always
 RestartSec=5
 StartLimitIntervalSec=300
 StartLimitBurst=5
@@ -89,6 +93,7 @@ class ServiceState:
     category: str
     module: str
     enabled: bool
+    conn_id: Optional[str] = None
     active: bool = False
     restart_count: int = 0
     last_restart_ts: float = 0.0
@@ -99,7 +104,6 @@ class SupervisorConfig:
     db_path: str = DB_PATH
     license_dir: str = LICENSE_DIR
     pubkey_file: str = CLOUD_PUBKEY_FILE
-    intf_poll_interval_s: float = 10.0
     license_check_interval_s: float = 60.0
 
 
@@ -130,8 +134,6 @@ class SupervisorApp(App):
         self._lock = threading.Lock()
 
         # Change detection
-        self._last_intf_updated_at: int = 0
-        self._last_intf_poll_ts: float = 0.0
         self._last_license_check_ts: float = 0.0
 
         # Cycle counter for TagBus command polling
@@ -161,27 +163,31 @@ class SupervisorApp(App):
         self._ensure_addon_registry()
 
     def on_connect(self) -> None:
-        # Subscribe to command tags via TagBus
+        # Subscribe to command tags
         self.databus.sync_tags([f"{_TAG_CMD_PREFIX}/**"])
         self.databus.set_on_tags_change(
             [f"{_TAG_CMD_PREFIX}/**"], self._on_command_tag)
+
+        # Subscribe to system tags for conn events
+        self.databus.sync_tags([_TAG_SYS_CONN_ADDED, _TAG_SYS_CONN_REMOVED])
+        self.databus.set_on_tags_change(
+            [_TAG_SYS_CONN_ADDED], self._on_conn_added)
+        self.databus.set_on_tags_change(
+            [_TAG_SYS_CONN_REMOVED], self._on_conn_removed)
         self.databus.commit()
 
         # Load initial state from app_registry
         self._load_registry()
 
+        # Sync connections from conns table
+        self._sync_conns_initial()
+
         # Start all enabled services
         self._start_enabled_services()
-
         self.logger.info(f"started {self._count_active()} services")
 
     def on_execute(self) -> None:
         now = time.monotonic()
-
-        # Poll intf table for changes
-        if now - self._last_intf_poll_ts >= self._sv_conf.intf_poll_interval_s:
-            self._last_intf_poll_ts = now
-            self._sync_interfaces()
 
         # Check license expiry
         if now - self._last_license_check_ts >= self._sv_conf.license_check_interval_s:
@@ -250,8 +256,7 @@ class SupervisorApp(App):
         except Exception:
             return False
 
-    def _create_service_unit(self, state: ServiceState,
-                             intf_id: Optional[str] = None) -> bool:
+    def _create_service_unit(self, state: ServiceState) -> bool:
         path = self._get_service_path(state.app_id, state.category)
 
         if state.category == "interface":
@@ -259,7 +264,7 @@ class SupervisorApp(App):
                 app_id=state.app_id,
                 python=_VENV_PYTHON,
                 module=state.module,
-                intf_id=intf_id or state.app_id)
+                conn_id=state.conn_id or state.app_id)
         else:
             content = _ADDON_SERVICE_TEMPLATE.format(
                 app_id=state.app_id,
@@ -318,7 +323,8 @@ class SupervisorApp(App):
                     app_id=row["app_id"],
                     category=row["category"],
                     module=row["module"],
-                    enabled=bool(row["enabled"]))
+                    enabled=bool(row["enabled"]),
+                    conn_id=row["conn_id"])
 
     def _start_enabled_services(self) -> None:
         need_reload = False
@@ -326,15 +332,7 @@ class SupervisorApp(App):
             for state in self._services.values():
                 if not state.enabled:
                     continue
-
-                # Find intf_id for interface apps
-                intf_id = None
-                if state.category == "interface":
-                    app_row = self._db.select_app(state.app_id)
-                    if app_row:
-                        intf_id = app_row["intf_id"]
-
-                if self._create_service_unit(state, intf_id):
+                if self._create_service_unit(state):
                     need_reload = True
 
         if need_reload:
@@ -360,104 +358,89 @@ class SupervisorApp(App):
 
 
     # ────────────────────────────────────────────────────────────
-    # Phase 2: Interface Sync
+    # Connection Sync (System Tag Events)
     # ────────────────────────────────────────────────────────────
 
-    def _sync_interfaces(self) -> None:
-        # Check if intf table has changed
-        current_max = self._db.select_max_intf_updated_at()
-        if current_max <= self._last_intf_updated_at:
-            return
-        self._last_intf_updated_at = current_max
-
-        # Get current intf rows
-        intf_rows = self._db.select_interfaces()
-        db_intf_ids = {row["intf"]: row for row in intf_rows}
-
-        # Get current registry interface entries
-        registry_rows = self._db.select_app_registry("interface")
-        registry_intf_ids = {}
-        for row in registry_rows:
-            if row["intf_id"]:
-                registry_intf_ids[row["intf_id"]] = row["app_id"]
-
+    def _sync_conns_initial(self) -> None:
+        conns = self._db.select_conns_enabled()
         need_reload = False
 
-        # Detect removed interfaces
-        removed = set(registry_intf_ids.keys()) - set(db_intf_ids.keys())
-        for intf_id in removed:
-            app_id = registry_intf_ids[intf_id]
-            self._deactivate_service(app_id, "interface")
-            self._remove_service_unit(app_id, "interface")
-            self._db.delete_app(app_id)
-            with self._lock:
-                self._services.pop(app_id, None)
-            self.logger.info(f"removed interface service: {app_id} (intf={intf_id})")
-            need_reload = True
-
-        # Detect added interfaces
-        added = set(db_intf_ids.keys()) - set(registry_intf_ids.keys())
-        for intf_id in added:
-            row = db_intf_ids[intf_id]
-            prot = row["prot"]
-            module = PROTOCOL_MODULES.get(prot)
+        for row in conns:
+            conn_id = row["conn"]
+            protocol = row["protocol"]
+            module = PROTOCOL_MODULES.get(protocol)
             if not module:
-                self.logger.warning(f"unknown protocol: {prot} (intf={intf_id})")
+                self.logger.warning(
+                    f"unknown protocol: {protocol} (conn={conn_id})")
                 continue
 
-            app_id = intf_id
+            app_id = conn_id
             self._db.upsert_app(app_id, "interface", module,
-                                enabled=True, intf_id=intf_id)
+                                enabled=True, conn_id=conn_id)
             state = ServiceState(app_id=app_id, category="interface",
-                                 module=module, enabled=True)
+                                 module=module, enabled=True, conn_id=conn_id)
             with self._lock:
                 self._services[app_id] = state
 
-            if self._create_service_unit(state, intf_id):
+            if self._create_service_unit(state):
                 need_reload = True
-            self.logger.info(f"added interface service: {app_id} (prot={prot})")
-
-        # Detect changed interfaces (protocol change)
-        existing = set(db_intf_ids.keys()) & set(registry_intf_ids.keys())
-        for intf_id in existing:
-            app_id = registry_intf_ids[intf_id]
-            row = db_intf_ids[intf_id]
-            prot = row["prot"]
-            new_module = PROTOCOL_MODULES.get(prot, "")
-
-            with self._lock:
-                state = self._services.get(app_id)
-            if state and state.module != new_module and new_module:
-                # Protocol changed — restart with new module
-                self._deactivate_service(app_id, "interface")
-                state.module = new_module
-                self._db.upsert_app(app_id, "interface", new_module,
-                                    enabled=True, intf_id=intf_id)
-                if self._create_service_unit(state, intf_id):
-                    need_reload = True
-                self.logger.info(
-                    f"updated interface service: {app_id} (new prot={prot})")
 
         if need_reload:
             self._daemon_reload()
 
-        # Start newly added services
-        for intf_id in added:
-            app_id = intf_id
-            with self._lock:
-                state = self._services.get(app_id)
-            if state:
-                if self._start_service(app_id, "interface"):
-                    state.active = True
+    def _on_conn_added(self, tag_id: str, tag_data) -> None:
+        conn_id = tag_data.v if isinstance(tag_data.v, str) else str(tag_data.v)
+        if not conn_id:
+            return
 
-        # Restart changed services
-        for intf_id in existing:
-            app_id = registry_intf_ids[intf_id]
-            with self._lock:
-                state = self._services.get(app_id)
-            if state and state.enabled and not state.active:
-                if self._start_service(app_id, "interface"):
-                    state.active = True
+        self.logger.info(f"conn_added event: {conn_id}")
+        row = self._db.select_conn(conn_id)
+        if not row:
+            self.logger.warning(f"conn_added but not found in DB: {conn_id}")
+            return
+
+        protocol = row["protocol"]
+        module = PROTOCOL_MODULES.get(protocol)
+        if not module:
+            self.logger.warning(
+                f"unknown protocol: {protocol} (conn={conn_id})")
+            return
+
+        app_id = conn_id
+        self._db.upsert_app(app_id, "interface", module,
+                            enabled=True, conn_id=conn_id)
+        state = ServiceState(app_id=app_id, category="interface",
+                             module=module, enabled=True, conn_id=conn_id)
+        with self._lock:
+            self._services[app_id] = state
+
+        if self._create_service_unit(state):
+            self._daemon_reload()
+        if self._start_service(app_id, "interface"):
+            state.active = True
+        self.logger.info(f"started new interface: {app_id} (prot={protocol})")
+
+    def _on_conn_removed(self, tag_id: str, tag_data) -> None:
+        conn_id = tag_data.v if isinstance(tag_data.v, str) else str(tag_data.v)
+        if not conn_id:
+            return
+
+        self.logger.info(f"conn_removed event: {conn_id}")
+        app_id = conn_id
+        with self._lock:
+            state = self._services.get(app_id)
+
+        if not state:
+            self.logger.warning(f"conn_removed but service not found: {conn_id}")
+            return
+
+        self._deactivate_service(app_id, "interface")
+        self._remove_service_unit(app_id, "interface")
+        self._daemon_reload()
+        self._db.delete_app(app_id)
+        with self._lock:
+            self._services.pop(app_id, None)
+        self.logger.info(f"removed interface: {app_id}")
 
 
     # ────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ from nodi_edge.config import DB_PATH
 
 AppCategory = str   # "interface", "addon"
 IntfId = str
+ConnId = str
 AppId = str
 
 # Protocol code → module mapping
@@ -96,23 +97,25 @@ class EdgeDB:
                    enabled: bool = False,
                    config: Optional[Dict[str, Any]] = None,
                    intf_id: Optional[str] = None,
+                   conn_id: Optional[str] = None,
                    license_token: Optional[str] = None,
                    license_expires_at: Optional[int] = None) -> None:
         now = int(time.time())
         config_json = json.dumps(config) if config else "{}"
         self.conn.execute(
             "INSERT INTO app_registry "
-            "(app_id, category, module, enabled, config, intf_id, "
+            "(app_id, category, module, enabled, config, intf_id, conn_id, "
             " license_token, license_expires_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(app_id) DO UPDATE SET "
             "  category=excluded.category, module=excluded.module, "
             "  enabled=excluded.enabled, config=excluded.config, "
-            "  intf_id=excluded.intf_id, license_token=excluded.license_token, "
+            "  intf_id=excluded.intf_id, conn_id=excluded.conn_id, "
+            "  license_token=excluded.license_token, "
             "  license_expires_at=excluded.license_expires_at, "
             "  updated_at=excluded.updated_at",
             (app_id, category, module, int(enabled), config_json, intf_id,
-             license_token, license_expires_at, now))
+             conn_id, license_token, license_expires_at, now))
         self.conn.commit()
 
     def update_app_enabled(self, app_id: str, enabled: bool) -> None:
@@ -166,6 +169,36 @@ class EdgeDB:
     def select_intf_ids(self) -> List[str]:
         rows = self.conn.execute("SELECT intf FROM intf ORDER BY intf").fetchall()
         return [r[0] for r in rows]
+
+
+    # Connection - Read
+    # ──────────────────────────────────────────────────────────────────────
+
+    def select_conns(self) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM conns ORDER BY conn").fetchall()
+
+    def select_conns_enabled(self) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM conns WHERE use = 1 ORDER BY conn").fetchall()
+
+    def select_conn(self, conn_id: str) -> Optional[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM conns WHERE conn = ?", (conn_id,)).fetchone()
+
+
+    # Block - Read
+    # ──────────────────────────────────────────────────────────────────────
+
+    def select_blocks_by_conn(self, conn_id: str) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM blocks WHERE conn = ? ORDER BY block",
+            (conn_id,)).fetchall()
+
+    def select_blocks_tags_by_block(self, block_id: str) -> List[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM blocks_tags WHERE block = ? ORDER BY tag",
+            (block_id,)).fetchall()
 
 
     # prot_prop - Mapping Lookup
